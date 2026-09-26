@@ -296,10 +296,19 @@ checks do not make the Blueprint unusable.
 
 ## Commands
 
-Today only the React + TypeScript + Vite frontend exists, in `frontend/` (npm,
+The React + TypeScript + Vite frontend lives in `frontend/` (npm,
 `frontend/package-lock.json`). The planned `backend/` and `producer/` Maven
-modules and `docker-compose.yml` do not exist yet; add their commands here when
-the build plan creates them.
+modules do not exist yet; add their commands here when the build plan creates
+them.
+
+Local stack (repository root, Docker Desktop running; no `.env` required):
+
+- Start and wait for health: `docker compose up -d --wait`
+- Status: `docker compose ps`
+- Stop (keep data): `docker compose down`
+- Reset all data: `docker compose down -v`
+- Kafka UI: http://localhost:8081; Kafka `localhost:9092` (host) or
+  `kafka:29092` (containers)
 
 Frontend commands run from `frontend/` (or use `npm --prefix frontend run <script>`
 from the root):
