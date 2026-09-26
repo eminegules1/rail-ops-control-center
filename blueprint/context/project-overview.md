@@ -1,6 +1,6 @@
 # Alstom Rail Operations Control Center - Project Overview
 
-<!-- blueprint:source-hash 5d0599304851c2ffde9d41b06ebbe5566e553d664ff94abfd3d58116ddd86a90 -->
+<!-- blueprint:source-hash 55e2c801f1c6edb298f6e6796eed515209ad712d72e3492ac6c736960070cb47 -->
 
 > Real-time railway operations and mobility incident monitoring: Kafka event
 > pipeline, Redis live state, PostgreSQL history, and a live React dashboard.
@@ -10,11 +10,11 @@
 A rail operations center receives a continuous stream of events and incidents
 from many services (ATS, CBTC, SCADA, TMS, PIS). Operators need one live view of
 every service's health, aggregated counts by severity and status, the recent
-event flow, and a way to move incidents through OPEN -> ACKNOWLEDGED -> RESOLVED.
+event flow, and a way to move incidents through their lifecycle.
 
-It is also a 7-day technical assignment for Alstom's Full Stack Software
-Designer role, scored on a 100-point rubric plus 20 bonus points. Every design
-choice should map to a rubric item and show production-minded engineering.
+It is also a 7-day technical assignment for an Alstom engineering role, scored
+on a 100-point rubric plus up to 20 bonus points. Every design choice should map
+to an assignment area and show production-minded engineering.
 
 ## Users
 
@@ -24,157 +24,214 @@ choice should map to a rubric item and show production-minded engineering.
   run one command, read the README and code, and score it. Startup must be
   trivial and the design easy to explain.
 
-No auth in the MVP; role-based login (ADMIN changes status, VIEWER read-only) is
-stretch feature 18.
-
 ## Usage model
 
 - Local, single-machine demo evaluated by trusted reviewers; not internet-facing.
-- Hard deadline: 7 days from receiving the assignment.
+- No auth in the MVP (lightweight role-based login is stretch feature 20).
+- Hard deadline: 7 days. Aim for a runnable end-to-end version (features 1-10)
+  by about day 3.
 - Mandatory acceptance: working producer and consumer, meaningful Redis use,
   React dashboard, REST API, Docker Compose, sufficient README, event filtering,
   status updates.
 - Dev machine is Windows 10 + Docker Desktop; a clean clone must start with one
   command.
-- Rule: never start a stretch item while any MVP item is unchecked.
+- The assignment brief is RESTRICTED: never commit it (it is gitignored) and
+  never copy its text or rubric into the README or docs.
+- Only build what can be explained in the interview; prefer the simpler design
+  when it earns the same score.
+- Never start a stretch item while any MVP item is unchecked. The MVP's extras
+  already exceed the bonus cap, so stretch adds little score.
 
 ## Features
 
-MVP, in build order. The headline is the end-to-end live pipeline: producer ->
-Kafka -> processor -> Postgres/Redis -> REST + WebSocket -> dashboard.
+MVP, in build order. Every app feature ships its tests, its own Dockerfile and
+compose service, and README updates, so `docker compose up --build` always runs
+what exists.
 
-1. **Event producer** - Spring Boot app publishing JSON events (auto interval,
-   `POST /produce?count=N`, ~200-event startup seed), plus the Kafka, Kafka UI,
-   Redis, and Postgres compose stack.
-2. **Event ingestion** - consumer group `incident-processor` validates events
-   and stores them idempotently in Postgres.
-3. **Retry and dead-letter handling** - exponential backoff, non-retryable
-   validation/deserialization errors, DLT publishing, `PRODUCER_INVALID_RATIO`
-   demo.
-4. **Live service state in Redis** - service hashes, counters, bounded
-   recent-events list, idempotency keys.
-5. **Events API** - filtered, searchable, paginated list and detail, ProblemDetail
-   errors, Swagger.
-6. **Incident status update** - `PUT` status that updates Postgres and atomically
-   adjusts Redis counters and service health.
-7. **Dashboard summary and services API** - cached summary, services endpoint,
-   Redis circuit breaker with Postgres fallback, startup reconciler.
-8. **Real-time push** - STOMP broadcasts of created/updated events and throttled
-   summary.
-9. **Dashboard page** - KPI cards, service health grid, severity and
-   events-over-time charts, live recent events.
-10. **Events page** - paginated table, filters, debounced search, detail drawer,
-    optimistic status change with rollback.
-11. **Service status page** - per-service health, last event time, latest
-    severity, open count.
-12. **Live UI updates** - WebSocket patches TanStack Query caches, connection
-    chip, reconnect, 10s polling fallback.
-13. **Observability** - JSON logs with `eventId` in MDC, Actuator health,
+1. **Local infrastructure** - Compose for Kafka (KRaft), Kafka UI, Redis,
+   Postgres with healthchecks and `.env.example`.
+2. **Event producer** - UUID ids, auto interval, `POST /produce?count=N`,
+   ~200-event seed burst, duplicate ratio; Dockerfile and compose service.
+3. **Event ingestion** - consumer group validates events, logs and skips invalid
+   ones, stores idempotently in Postgres; backend test setup (JUnit 5, Mockito,
+   Testcontainers); Dockerfile and compose service.
+4. **Live service state in Redis** - Lua `apply-event`: counters, active
+   per-severity health, open and active counts, timeline, recent list,
+   apply-once guard.
+5. **Events API** - filtered, searchable, paginated list and detail,
+   ProblemDetail errors, Swagger.
+6. **Incident status update** - lifecycle rules, 409 on invalid transitions,
+   optimistic locking, Lua `apply-status-change`.
+7. **Dashboard data APIs** - summary, services, timeline, recent-events, summary
+   cache.
+8. **Dashboard page** - app shell and routes, KPI cards, health grid, severity
+   and events-over-time charts, recent events, polling refresh; Vitest + RTL;
+   nginx frontend compose service.
+9. **Events page** - paginated table, URL-synced filters and search,
+   deep-linkable detail drawer, optimistic status change with rollback.
+10. **Service status page** - health, last event time, latest severity, open and
+    active counts.
+
+Features 1-10 cover every mandatory criterion. Improvements follow:
+
+11. **Retry and dead-letter handling** - exponential backoff, non-retryable
+    validation errors, DLT publishing, invalid-message demo ratio.
+12. **Real-time push** - STOMP broadcasts of created/updated events and throttled
+    summary.
+13. **Live UI updates** - WebSocket patches TanStack Query caches, connection
+    chip, reconnect; polling becomes fallback only.
+14. **Redis resilience** - circuit breaker, Postgres fallback for dashboard reads,
+    reconcile-needed flag, pause-and-rebuild reconciler.
+15. **Observability** - JSON logs with `eventId` in MDC, Actuator health,
     Prometheus counters for processed/invalid/DLT.
-14. **Automated tests** - JUnit 5 + Mockito, Testcontainers happy-path and DLT,
-    Vitest + RTL.
-15. **One-command local startup** - containerized backend/producer/frontend,
-    healthchecks, env vars, clean-clone check.
-16. **CI pipeline** - GitHub Actions building and testing all three modules.
-17. **Delivery documentation** - README, Mermaid architecture, API docs,
-    Redis/Kafka design, screenshots/video, limitations, rubric mapping table.
+16. **End-to-end test coverage** - Testcontainers flows (happy path, DLT,
+    Redis-down fallback) and a coverage report.
+17. **Clean-clone startup verification** - harden healthchecks, startup order,
+    env defaults; verify one command on a clean clone.
+18. **CI pipeline** - GitHub Actions building and testing all three modules.
+19. **Delivery documentation** - final README, Mermaid architecture, API docs,
+    Redis/Kafka and consumer-group notes, performance notes, screenshots/video,
+    known limitations.
 
-Stretch (value order, only after MVP): 18 role-based JWT login, 19 OpenTelemetry
-+ Jaeger, 20 CD to GHCR, 21 Kubernetes/Helm, 22 performance notes with a load
-test, 23 AI incident assistant (off without an API key).
+Stretch (value order, only after MVP): 20 lightweight JWT login (ADMIN/VIEWER
+demo users, credentials in README), 21 OpenTelemetry + Jaeger, 22 CD to GHCR,
+23 Kubernetes/Helm, 24 AI incident assistant (off without an API key).
 
 ## Data model
 
-PostgreSQL is the source of truth; Redis holds derived live state that can be
-rebuilt from Postgres.
+PostgreSQL is the source of truth. Redis holds derived live state that the
+reconciler can always rebuild from Postgres.
 
-### Enums
+### Enums and derived terms
 
 - `Severity` - `INFO`, `WARNING`, `MAJOR`, `CRITICAL` (producer weights severity)
 - `EventStatus` - `OPEN`, `ACKNOWLEDGED`, `RESOLVED`
-- `ServiceHealth` (derived) - `HEALTHY`, `DEGRADED`, `DOWN`
+- **Open** - status `OPEN`. **Active** - status `OPEN` or `ACKNOWLEDGED`.
+- `ServiceHealth` - active `CRITICAL` > 0 -> `DOWN`; else active `MAJOR` or
+  `WARNING` > 0 -> `DEGRADED`; else `HEALTHY`. Recomputed inside both Lua
+  scripts, so it never drifts from the counts.
 - Sources - `ATS`, `CBTC`, `SCADA`, `TMS`, `PIS`
 
 ### Event (Postgres `events`, Flyway migration)
 
-- `eventId` (varchar, unique) - e.g. `EVT-10001`; idempotency key
-- `source` (varchar) - one of the sources above
+- `eventId` (varchar, unique; column `event_id`) - producer uses `EVT-` + UUID;
+  the consumer accepts any non-blank string (e.g. a hand-published `EVT-10001`)
+- `source` (varchar)
 - `service` (varchar) - e.g. `route-service`, `signal-service`, `train-tracking`
 - `severity` (enum `Severity`)
-- `message` (text) - human-readable
-- `status` (enum `EventStatus`) - changed only via the status endpoint
+- `message` (text)
+- `status` (enum `EventStatus`) - initial value from the Kafka payload; changed
+  only via the status endpoint
 - `timestamp` (timestamptz) - event creation time, ISO 8601 on the wire
-- `receivedAt` (timestamptz) - when the processor stored it
-- `updatedAt` (timestamptz) - last status change
+- `receivedAt`, `updatedAt` (timestamptz) - processing audit
+- `version` - JPA `@Version` for overlapping-write detection
 - Indexes: `severity`, `status`, `source`, `service`, `timestamp`
 
-> Locked by features 2-7: the Kafka payload, JPA entity, and API DTOs all share
+> Locked by features 2-7: the Kafka payload, JPA entity, and API DTOs share
 > these field names.
 
-### Kafka message (`incident-events`)
+### Kafka
 
-- JSON with `eventId`, `source`, `service`, `severity`, `message`, `status`,
-  `timestamp`; validated with Bean Validation
-- Key = `service` so each service's events stay ordered; 3 partitions
-- `incident-events.DLT` receives invalid and exhausted-retry messages
-- Topic names and partition counts come from config and are declared in code
+- `incident-events` - 3 partitions, key = `service` (per-service ordering), 24h
+  retention (matches the apply-once TTL)
+- `incident-events.DLT` - invalid and retry-exhausted messages (feature 11;
+  before that, invalid messages are logged and skipped)
+- Payload: `eventId`, `source`, `service`, `severity`, `message`, `status`,
+  `timestamp`; Bean Validation
+- Consumer group `incident-processor`, concurrency 3, manual ack
+- Names, partitions, retention from config; topics declared in code
+
+### Ingestion contract (at-least-once, idempotent)
+
+1. `INSERT ... ON CONFLICT (event_id) DO NOTHING` in Postgres.
+2. Lua `apply-event`: `SET processed:{id} NX EX 86400`; only on success, update
+   counters, open/active counts, health, timeline, recent list atomically.
+3. Ack the offset.
+
+Every step is repeatable. If Redis is down (circuit open), the event is still
+stored and acked and an in-memory "reconcile needed" flag is set.
 
 ### Redis keys
 
+Counter naming follows the brief's suggested keys.
+
 | Key | Type | Purpose |
 |---|---|---|
-| `service:{name}:state` | Hash | `status`, `lastEventTime`, `latestSeverity`, `openCount` |
+| `service:{name}` | Hash | `status`, `lastEventTime`, `latestSeverity`, `active:{SEV}` x4, `openCount`, `activeCount` |
 | `services` | Set | known service names |
-| `count:total` | String (INCR) | total events |
-| `count:severity:{SEV}` | String (INCR) | per-severity counts |
-| `count:status:{STATUS}` | String (INCR) | per-status counts |
-| `recent:events` | List | `LPUSH` + `LTRIM` to 50 |
+| `events:count` | String (INCR) | total events |
+| `severity:{SEV}:count` | String (INCR) | all events per severity |
+| `status:{STATUS}:count` | String (INCR) | events per status |
+| `active:{SEV}:count` | String (INCR) | active events per severity |
+| `timeline:{yyyyMMddHHmm}` | Hash | per-minute counts by severity (HINCRBY), UTC, 2h TTL |
+| `recent:events` | List | eventIds only; LPUSH + LTRIM 50 |
 | `cache:dashboard:summary` | String (JSON) | 5s TTL read-through cache |
-| `processed:{eventId}` | String | `SETNX`, 24h TTL idempotency guard |
+| `processed:{eventId}` | String | apply-once guard, 24h TTL |
 
-Health rule: any open `CRITICAL` -> `DOWN`; any open `MAJOR`/`WARNING` ->
-`DEGRADED`; otherwise `HEALTHY`.
+All multi-key updates run as Lua scripts (`apply-event`,
+`apply-status-change`).
 
-### API shapes (DTO records)
+### Incident lifecycle
 
-- **Summary** - `totalEvents`, `openEvents`, `criticalEvents`, severity
-  distribution, `services[]`
-- **Service** - name, status (health), `lastEventTime`, `latestSeverity`,
-  `openCount`
-- **Status update request** - target `status`
-- **Errors** - RFC 7807 `ProblemDetail`
+| From | Allowed to |
+|---|---|
+| `OPEN` | `ACKNOWLEDGED`, `RESOLVED` |
+| `ACKNOWLEDGED` | `RESOLVED` |
+| `RESOLVED` | `OPEN` (reopen) |
+
+- Same status -> 200, no change. Other transitions -> 409 ProblemDetail
+  (`type: /problems/invalid-status-transition`, with `allowedTransitions`).
+- Unknown status value -> 400. Unknown `eventId` -> 404. Overlapping
+  server-side writes (`@Version`) -> 409; clients send no version.
+- Commit to Postgres, then Lua `apply-status-change`. If Redis fails, set the
+  reconcile flag (a same-status retry is a no-op and would never repair Redis).
+
+### Reconciler
+
+Runs at startup when keys are missing, and after Redis recovers when the flag is
+set. It pauses the Kafka listener, holds a lock that status updates wait on,
+rebuilds all derived keys from Postgres, then resumes.
 
 ## API and real-time
 
-| Method | Path | Purpose |
+| Method | Path | Contract |
 |---|---|---|
 | `GET` | `/api/events` | filters `severity`, `status`, `source`, `service`, `q`; `page`/`size`/`sort` |
-| `GET` | `/api/events/{eventId}` | detail |
-| `PUT` | `/api/events/{eventId}/status` | Postgres update, atomic Redis adjust, evict summary cache, broadcast |
-| `GET` | `/api/dashboard/summary` | cached summary |
-| `GET` | `/api/services` | per-service state |
+| `GET` | `/api/events/{eventId}` | detail; 404 if unknown |
+| `PUT` | `/api/events/{eventId}/status` | lifecycle above; evicts summary cache, broadcasts |
+| `GET` | `/api/dashboard/summary` | cached summary (fields below) |
+| `GET` | `/api/services` | per-service `status`, `lastEventTime`, `latestSeverity`, `openCount`, `activeCount` |
+| `GET` | `/api/dashboard/timeline?minutes=60` | per-minute counts by severity, bucketed by event `timestamp` (UTC); `minutes` 1-120 else 400 |
+| `GET` | `/api/dashboard/recent-events?limit=20` | ids from `recent:events`, rows loaded from Postgres; `limit` 1-50 else 400 |
 | `POST` | `/produce?count=N` | producer app: manual burst |
 
+Summary fields (a superset of the brief's example): `totalEvents` (all),
+`openEvents` (OPEN), `acknowledgedEvents` (ACKNOWLEDGED), `criticalEvents`
+(CRITICAL, not RESOLVED), `severityDistribution` (all events by severity),
+`services[]` (name, status, lastEventTime). Dashboard reads fall back to
+Postgres when Redis is down.
+
+- Errors: RFC 7807 `ProblemDetail`; DTOs are Java records
 - STOMP over WebSocket at `/ws`: `/topic/events` (created/updated),
-  `/topic/summary` (throttled to at most 1/s)
+  `/topic/summary` (at most 1/s). Polling (`refetchInterval`) keeps pages live
+  before this lands and whenever the socket is down.
 - Swagger UI via springdoc; Actuator health and Prometheus endpoint
 
 ## Tech stack
 
 - **Java 21, Spring Boot 3** - backend and producer, Maven multi-module
-- **spring-kafka** - consumer (concurrency 3, manual ack), `ErrorHandlingDeserializer`,
-  `DefaultErrorHandler` + `DeadLetterPublishingRecoverer`
+- **spring-kafka** - `ErrorHandlingDeserializer`, `DefaultErrorHandler` +
+  `DeadLetterPublishingRecoverer`
 - **Spring Data JPA + Flyway, PostgreSQL 16** - source of truth
-- **Spring Data Redis (Lettuce), Redis 7** - live state, counters, cache, idempotency
+- **Spring Data Redis (Lettuce), Redis 7** - live state via Lua scripts
 - **Resilience4j** - circuit breaker around Redis
 - **Spring WebSocket (STOMP)** - real-time push
-- **springdoc-openapi** - Swagger UI
-- **Micrometer + Actuator, logstash-logback-encoder** - metrics and JSON logs
-- **React 19 + TypeScript + Vite** (`frontend/`) - SPA
-- **React Router, TanStack Query, MUI, Recharts, @stomp/stompjs** - routing,
-  server state, UI, charts, WebSocket client
-- **Kafka (KRaft, single broker), Kafka UI, nginx** - infra; nginx serves the
-  frontend and proxies `/api` and `/ws`
+- **springdoc-openapi, Micrometer + Actuator, logstash-logback-encoder** - API
+  docs, metrics, JSON logs
+- **React 19 + TypeScript + Vite** (`frontend/`) with React Router, TanStack
+  Query, MUI, Recharts, @stomp/stompjs
+- **Kafka (KRaft, single broker), Kafka UI, nginx** - nginx serves the frontend
+  and proxies `/api` and `/ws`
 - **JUnit 5, Mockito, Testcontainers, Vitest, React Testing Library** - tests
 
 Repo layout: `backend/`, `producer/`, `frontend/`, `docs/`, `blueprint/`,
@@ -184,7 +241,7 @@ Repo layout: `backend/`, `producer/`, `frontend/`, `docs/`, `blueprint/`,
 ## Monetization
 
 Not applicable: a hiring assignment. Success is passing every mandatory
-acceptance criterion and scoring as high as possible (target 100 + most bonus).
+acceptance criterion and scoring as high as possible.
 
 ## UI/UX
 
@@ -192,59 +249,38 @@ Control-room style: dense but calm, scannable in seconds. Left nav (Dashboard /
 Events / Services), top bar with the short label "Rail Ops Control Center" and a
 live/reconnecting/offline connection chip.
 
-- **Dashboard** - KPI cards (total/open/critical), service health grid, severity
-  distribution chart, events-over-time chart, live recent events
-- **Events** - server-paginated table, severity/status/source filters, debounced
-  search, detail drawer, optimistic status change
-- **Services** - status, last event time, latest severity, open count per service
+| Route | Page |
+|---|---|
+| `/` | redirects to `/dashboard` |
+| `/dashboard` | KPI cards (total/open/critical), service health grid, severity distribution and events-over-time charts, live recent events |
+| `/events` | server-paginated table; filters, search, page in the query string (`?severity=CRITICAL&status=OPEN&q=signal&page=2`); optimistic status change with rollback |
+| `/events/:eventId` | Events page with the detail drawer open (deep link) |
+| `/services` | health, last event time, latest severity, open count (main column), active count |
+| `*` | not-found page |
 
-Colors are consistent everywhere: severity INFO blue, WARNING amber, MAJOR
-orange, CRITICAL red; health HEALTHY green, DEGRADED amber, DOWN red. New events
-animate in gently, no full-page reloads. Loading skeletons, empty states, error
-toasts. Dark mode is nice to have.
-
-> TODO: route paths for the three pages are not specified.
+Severity colors: INFO blue, WARNING amber, MAJOR orange, CRITICAL red. Health:
+HEALTHY green, DEGRADED amber, DOWN red. New events animate in gently, no
+full-page reloads. Loading skeletons, empty states, error toasts. Dark mode is
+nice to have.
 
 ## Deployment
 
 - **Target:** local only, `docker compose up --build` on a clean clone
 - **Services and ports:** kafka, kafka-ui (:8081), redis, postgres, backend
   (:8080), producer, frontend via nginx (:3000)
+- **Incremental:** each app feature adds its Dockerfile and compose service;
+  feature 17 hardens and verifies
 - **Startup:** healthchecks with `depends_on: service_healthy`
-- **Config:** env vars documented in `.env.example`, including
-  `PRODUCER_INTERVAL_MS` and `PRODUCER_INVALID_RATIO`
-- **Delivery:** public GitHub repo with meaningful commits across the week
+- **Config:** env vars in `.env.example`, including `PRODUCER_INTERVAL_MS`,
+  `PRODUCER_INVALID_RATIO`, `PRODUCER_DUPLICATE_RATIO`
+- **Delivery:** GitHub repo link with meaningful commits across the week;
+  public vs private with reviewer access to confirm with the recruiter
 - **CI (GitHub Actions):** `mvn verify` (backend, producer),
   `npm ci && npm test && npm run build` (frontend), `docker compose build`
-- **Deliverables:** README, architecture explanation + diagram, API docs
-  (Swagger + `docs/api.md`), screenshots or demo video, known limitations
-
-## Open questions
-
-> Gaps found in the plans. Resolve them in the plans, then re-run `/overview`.
-
-1. **Events-over-time chart has no data source.** No endpoint or Redis key
-   returns time-bucketed counts. Decide between a summary field, a new endpoint,
-   or client-side bucketing of fetched events.
-2. **Dashboard recent-events list has no endpoint.** `recent:events` exists in
-   Redis, but no API exposes it; `GET /api/events` sorted by `timestamp` may be
-   the intended source.
-3. **Service health cannot be recomputed from the hash alone.** After a CRITICAL
-   is resolved, deciding DOWN vs DEGRADED needs per-service open counts by
-   severity, but `service:{name}:state` stores only `openCount`.
-4. **`eventId` uniqueness across producer restarts.** A counter-style
-   `EVT-10001` that resets on restart would collide, and the collision would be
-   dropped as a duplicate. Specify how ids are generated.
-5. **Idempotency ordering.** If `SETNX processed:{id}` succeeds but the Postgres
-   write fails, the retry is skipped as a duplicate and the event is lost. Define
-   whether Postgres uniqueness is the authority and when the Redis key is set.
-6. **Status transitions.** Allowed moves are not defined (backward moves,
-   reopening, same-status updates) nor the error returned for invalid ones.
-7. **`criticalEvents` meaning.** All CRITICAL events, or only open ones.
-8. **Tests arrive late.** Feature 14 adds the test runners, so features 1-13 run
-   without a test gate. Consider running `/tests` (frontend) and adding the
-   Maven test setup with the first backend feature, leaving feature 14 for the
-   Testcontainers and component suites.
-9. **Feature 1 bundles two concerns.** The producer app and the whole
-   infrastructure compose stack (plus the Maven parent POM) share one item; a
-   larger first step than the rest.
+- **README:** grows with each feature; final version has setup, architecture +
+  Mermaid diagram, API docs (Swagger + `docs/api.md`), Redis key design,
+  consumer-group and performance notes, screenshots or demo video, known
+  limitations. Written in our own words, never copying the brief.
+- **Known limitations (documented):** the Redis rebuild does not restore
+  `processed:{id}` keys, so re-consuming a stored event after a manual offset
+  reset within 24h would count it twice.

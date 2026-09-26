@@ -2,29 +2,32 @@
 
 ## MVP
 
-- [ ] 1. **Event producer** - Spring Boot app publishes schema-consistent JSON events to Kafka (auto interval, manual trigger, startup seed burst), with the Kafka/Redis/Postgres/Kafka UI compose stack
-- [ ] 2. **Event ingestion** - backend consumer group validates events and stores them idempotently in Postgres
-- [ ] 3. **Retry and dead-letter handling** - exponential-backoff retries, non-retryable validation errors, DLT publishing, invalid-message demo ratio in producer
-- [ ] 4. **Live service state in Redis** - service health hashes, severity/status/total counters, bounded recent-events list, idempotency TTL keys
+Every app feature adds its own Dockerfile and compose service and updates the README, so `docker compose up --build` always runs what exists. Features 1-10 are the runnable end-to-end version that covers every mandatory criterion (target: about day 3).
+
+- [ ] 1. **Local infrastructure** - Compose stack for Kafka (KRaft), Kafka UI, Redis and Postgres with healthchecks and `.env.example`
+- [ ] 2. **Event producer** - Spring Boot app publishes UUID-keyed, schema-consistent JSON events (auto interval, manual trigger, seed burst, duplicate ratio), with its Dockerfile and compose service
+- [ ] 3. **Event ingestion** - backend consumer group validates events, logs and skips invalid ones, and stores them idempotently in Postgres, with the backend test setup (JUnit, Mockito, Testcontainers) and its Dockerfile and compose service
+- [ ] 4. **Live service state in Redis** - atomic Lua apply-event: brief-style counters, active-per-severity health, open and active counts, timeline buckets, recent list, apply-once guard
 - [ ] 5. **Events API** - filtered, searchable, paginated event list and event detail with ProblemDetail errors and Swagger docs
-- [ ] 6. **Incident status update** - PUT status endpoint that atomically adjusts Redis counters and service health
-- [ ] 7. **Dashboard summary and services API** - cached summary endpoint, services endpoint, Redis circuit breaker with Postgres fallback, startup reconciler
-- [ ] 8. **Real-time push** - STOMP WebSocket broadcasting new/updated events and throttled summary updates
-- [ ] 9. **Dashboard page** - KPI cards, service health grid, severity and events-over-time charts, recent events list
-- [ ] 10. **Events page** - paginated table with filters, search, detail drawer and optimistic status change
-- [ ] 11. **Service status page** - per-service health, last event time, latest severity, open incident count
-- [ ] 12. **Live UI updates** - WebSocket cache patching, connection status chip, reconnect handling and polling fallback
-- [ ] 13. **Observability** - structured JSON logs, Actuator health, Prometheus metrics for processed/invalid/DLT events
-- [ ] 14. **Automated tests** - backend unit tests, Testcontainers happy-path and DLT integration tests, frontend component tests
-- [ ] 15. **One-command local startup** - fully containerized backend/producer/frontend, healthchecks, env vars, clean-clone verification
-- [ ] 16. **CI pipeline** - GitHub Actions building and testing backend, producer and frontend
-- [ ] 17. **Delivery documentation** - README, architecture diagram, API docs, Redis/Kafka design notes, screenshots/demo video, known limitations
+- [ ] 6. **Incident status update** - lifecycle rules, 409 on invalid transitions, optimistic locking, atomic Redis counter and health update
+- [ ] 7. **Dashboard data APIs** - summary, services, timeline and recent-events endpoints with the summary cache
+- [ ] 8. **Dashboard page** - app shell and routes, KPI cards, service health grid, severity and events-over-time charts, recent events list, polling refresh, with the frontend test setup (Vitest, RTL) and the nginx frontend compose service
+- [ ] 9. **Events page** - paginated table with URL-synced filters and search, deep-linkable detail drawer, optimistic status change
+- [ ] 10. **Service status page** - per-service health, last event time, latest severity, open and active incident counts
+- [ ] 11. **Retry and dead-letter handling** - exponential-backoff retries, non-retryable validation errors, DLT publishing, invalid-message demo ratio
+- [ ] 12. **Real-time push** - STOMP WebSocket broadcasting new/updated events and throttled summary updates
+- [ ] 13. **Live UI updates** - WebSocket cache patching, connection status chip, reconnect handling, polling as fallback only
+- [ ] 14. **Redis resilience** - Redis circuit breaker, Postgres fallback for dashboard reads, reconcile-needed flag and pause-and-rebuild reconciler
+- [ ] 15. **Observability** - structured JSON logs, Actuator health, Prometheus metrics for processed/invalid/DLT events
+- [ ] 16. **End-to-end test coverage** - Testcontainers flows for happy path, DLT and Redis-down fallback, plus coverage report
+- [ ] 17. **Clean-clone startup verification** - harden the compose stack (healthchecks, startup order, env defaults) and verify one-command startup on a clean clone
+- [ ] 18. **CI pipeline** - GitHub Actions building and testing backend, producer and frontend
+- [ ] 19. **Delivery documentation** - final README, architecture diagram, API docs, Redis/Kafka and consumer-group design notes, performance notes, screenshots/demo video, known limitations
 
 ## Stretch (bonus - only if time allows, in value order)
 
-- [ ] 18. **Role-based login** - JWT auth with ADMIN (status changes) and VIEWER (read-only) roles, login page, protected routes
-- [ ] 19. **Distributed tracing** - OpenTelemetry traces across producer → Kafka → backend → API, Jaeger container in compose
-- [ ] 20. **Continuous delivery** - CI builds and pushes Docker images to GitHub Container Registry on main
-- [ ] 21. **Kubernetes manifests** - Helm chart or manifests deploying the full stack
-- [ ] 22. **Performance notes** - README section on partitioning, consumer concurrency, DB indexes, Redis caching, WS throttling, with a simple load test result
-- [ ] 23. **AI incident assistant** - panel that summarizes an incident and suggests next steps via an LLM API (disabled when no API key is set)
+- [ ] 20. **Role-based login** - lightweight JWT auth with ADMIN (status changes) and VIEWER (read-only) demo users, login page, protected routes
+- [ ] 21. **Distributed tracing** - OpenTelemetry traces across producer → Kafka → backend → API, Jaeger container in compose
+- [ ] 22. **Continuous delivery** - CI builds and pushes Docker images to GitHub Container Registry on main
+- [ ] 23. **Kubernetes manifests** - Helm chart or manifests deploying the full stack
+- [ ] 24. **AI incident assistant** - panel that summarizes an incident and suggests next steps via an LLM API (disabled without an API key)
