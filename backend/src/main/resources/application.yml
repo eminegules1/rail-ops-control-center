@@ -10,6 +10,13 @@ spring:
       # Fail fast (ms) while Postgres is down (default 30000): the listener retries sooner after it returns,
       # and /actuator/health answers within the compose healthcheck timeout.
       connection-timeout: 5000
+  data:
+    redis:
+      # Host-run default; the compose service sets SPRING_DATA_REDIS_HOST.
+      host: localhost
+      port: ${REDIS_PORT:6379}
+      # Fail fast while Redis is down (Lettuce default 60s), like the Hikari timeout above.
+      timeout: 2s
   jpa:
     open-in-view: false
     hibernate:

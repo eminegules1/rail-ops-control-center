@@ -15,15 +15,18 @@ public class EventIngestionService {
 
     private final IncidentEventRepository repository;
     private final Validator validator;
+    private final LiveStateUpdater liveState;
 
-    public EventIngestionService(IncidentEventRepository repository, Validator validator) {
+    public EventIngestionService(IncidentEventRepository repository, Validator validator, LiveStateUpdater liveState) {
         this.repository = repository;
         this.validator = validator;
+        this.liveState = liveState;
     }
 
     /**
-     * Validates and stores the event once. Safe to repeat: a redelivered or duplicated event is left unchanged.
-     * Validation runs before any database work, so an invalid event is rejected even while Postgres is down.
+     * Validates and stores the event once, then applies it once to the Redis live state. Safe to repeat: a
+     * redelivered or duplicated event is left unchanged. Validation runs before any database work, so an invalid
+     * event is rejected even while Postgres is down.
      *
      * @throws InvalidEventException when the payload breaks the event contract
      */
@@ -42,8 +45,15 @@ public class EventIngestionService {
                 event.severity().name(), event.message(), event.status().name(), event.timestamp());
         if (inserted == 0) {
             log.info("Duplicate event {} skipped", event.eventId());
+            // Still apply: the first delivery may have stored the row and then failed on Redis. The stored row
+            // wins over a conflicting duplicate, and the Redis guard keeps the apply to once.
+            IncidentEvent stored = repository.findByEventId(event.eventId())
+                    .orElseThrow(() -> new IllegalStateException("Duplicate event row not found"));
+            liveState.applyEvent(stored.getEventId(), stored.getService(), stored.getSeverity(), stored.getStatus(),
+                    stored.getTimestamp());
             return IngestionResult.DUPLICATE;
         }
+        liveState.applyEvent(event.eventId(), event.service(), event.severity(), event.status(), event.timestamp());
         log.debug("Stored event {}", event.eventId());
         return IngestionResult.STORED;
     }

@@ -113,7 +113,9 @@ Processing is at-least-once and idempotent. For each record the backend:
 
 1. validates the payload,
 2. runs `INSERT ... ON CONFLICT (event_id) DO NOTHING`,
-3. commits the Kafka offset only after the insert has committed.
+3. applies the event once to the Redis live state (see
+   [Live service state](#live-service-state-redis)),
+4. commits the Kafka offset only after both have succeeded.
 
 A redelivered or duplicated event (the producer re-sends some on purpose) is
 therefore stored once. The first stored copy wins, and the backend logs
@@ -134,7 +136,8 @@ Invalid messages are logged with their partition and offset and skipped, and
 their offset is committed. For now they are only logged; a later feature sends
 them to a dead-letter topic. Any other failure, such as PostgreSQL being down,
 is retried every 2 seconds until it succeeds, so valid events are never
-dropped.
+dropped. The same applies while Redis is down: the event is already stored in
+PostgreSQL, and the Redis step is retried until Redis is back.
 
 Inspect stored events:
 
@@ -157,8 +160,8 @@ docker compose logs backend | grep "Skipping invalid"
 If port 8080 is already taken on your machine, set `BACKEND_PORT` in `.env`.
 
 Build and test the module from the repository root with JDK 21 and Maven 3.9.
-The tests start Kafka and PostgreSQL with Testcontainers, so Docker Desktop
-must be running:
+The tests start Kafka, PostgreSQL and Redis with Testcontainers, so Docker
+Desktop must be running:
 
 ```bash
 mvn -pl backend -am verify
@@ -166,7 +169,47 @@ mvn -pl backend -am verify
 
 To run it from an IDE against the compose stack, start the stack and run
 `BackendApplication`. It connects to `localhost:9092` and
-`localhost:5432/incidents` by default.
+`localhost:5432/incidents` and Redis on `localhost:6379` by default.
+
+### Live service state (Redis)
+
+After storing an event, the backend runs one Lua script, `apply-event`
+(`backend/src/main/resources/redis/apply-event.lua`), that updates all live
+state atomically. It first sets `processed:{eventId}` (`SET NX`, 24h TTL, the
+same as the topic retention); if that key already exists the event was already
+applied and nothing else changes, so redelivered and duplicate events are
+counted once.
+
+| Key | Type | Content |
+|---|---|---|
+| `events:count` | String | all events |
+| `severity:{SEV}:count` | String | all events per severity |
+| `status:{STATUS}:count` | String | events per initial status |
+| `active:{SEV}:count` | String | active (`OPEN` or `ACKNOWLEDGED`) events per severity |
+| `services` | Set | known service names |
+| `service:{name}` | Hash | `active:INFO`/`WARNING`/`MAJOR`/`CRITICAL`, `openCount`, `activeCount`, `status`, `lastEventTime`, `latestSeverity` |
+| `timeline:{yyyyMMddHHmm}` | Hash | events per severity in that UTC minute of the event `timestamp`; expires 2h after the minute |
+| `recent:events` | List | the 50 most recently applied event ids, newest first |
+| `processed:{eventId}` | String | apply-once guard, 24h TTL |
+
+A service's `status` is recalculated from its active counts on every event:
+any active `CRITICAL` makes it `DOWN`, otherwise any active `MAJOR` or
+`WARNING` makes it `DEGRADED`, otherwise it is `HEALTHY`. `lastEventTime` and
+`latestSeverity` follow the newest event `timestamp`, not arrival order.
+Events older than the 2-hour timeline window do not create a timeline bucket.
+
+Events stored before Redis state existed (for example from an older run of the
+stack) are not in Redis yet; a later feature rebuilds Redis from PostgreSQL.
+Until then, start from a clean slate with `docker compose down -v`.
+
+Inspect the live state:
+
+```bash
+docker compose exec redis redis-cli GET events:count
+docker compose exec redis redis-cli SMEMBERS services
+docker compose exec redis redis-cli HGETALL service:signal-service
+docker compose exec redis redis-cli LRANGE recent:events 0 9
+```
 
 ## Frontend
 

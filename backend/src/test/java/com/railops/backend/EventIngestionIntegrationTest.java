@@ -14,8 +14,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.kafka.core.KafkaAdmin;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -33,6 +35,10 @@ class EventIngestionIntegrationTest {
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16.15-alpine");
 
+    @Container
+    @ServiceConnection(name = "redis")
+    static GenericContainer<?> redis = new GenericContainer<>("redis:7.4.11-alpine").withExposedPorts(6379);
+
     private static final String TOPIC = "incident-events";
     private static final String KEY = "signal-service";
 
@@ -44,6 +50,9 @@ class EventIngestionIntegrationTest {
 
     @Autowired
     private IncidentEventRepository repository;
+
+    @Autowired
+    private StringRedisTemplate redisTemplate;
 
     // Ends on invalid records (the last a tombstone), so reaching the end offset proves that skipped records'
     // offsets are committed, not just covered by a later valid record's ack.
@@ -59,6 +68,8 @@ class EventIngestionIntegrationTest {
                 event("EVT-3", "CBTC", "s".repeat(100), "INFO", "\"long service\""),
                 event("EVT-4", "XYZ", KEY, "INFO", "\"unknown source\""),
                 event("EVT-6", "CBTC", KEY, "3", "\"enum ordinal\""),
+                // Passes validation, but Postgres rejects the NUL byte: skipped, not retried forever.
+                event("EVT-7", "CBTC", KEY, "INFO", "\"a\\u0000b\""),
                 event("EVT-5", "ATS", KEY, "WARNING", "\"second valid\""),
                 "[]");
 
@@ -77,6 +88,16 @@ class EventIngestionIntegrationTest {
                 assertThat(committedOffset(admin, topicPartition)).isEqualTo(endOffset(admin, topicPartition));
             });
         }
+
+        // The duplicate EVT-1 is applied to the live state once.
+        assertThat(redisTemplate.opsForValue().get("events:count")).isEqualTo("2");
+        assertThat(redisTemplate.hasKey("processed:EVT-1")).isTrue();
+        assertThat(redisTemplate.opsForList().range("recent:events", 0, -1)).containsExactly("EVT-5", "EVT-1");
+        assertThat(redisTemplate.opsForHash().entries("service:" + KEY))
+                .containsEntry("status", "DOWN")
+                .containsEntry("active:CRITICAL", "1")
+                .containsEntry("active:WARNING", "1")
+                .containsEntry("openCount", "2");
     }
 
     private static long committedOffset(AdminClient admin, TopicPartition partition) throws Exception {

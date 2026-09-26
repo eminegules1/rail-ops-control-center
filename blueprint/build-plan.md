@@ -7,7 +7,7 @@ Every app feature adds its own Dockerfile and compose service and updates the RE
 - [x] 1. **Local infrastructure** - Compose stack for Kafka (KRaft), Kafka UI, Redis and Postgres with healthchecks and `.env.example`
 - [x] 2. **Event producer** - Spring Boot app publishes UUID-keyed, schema-consistent JSON events (auto interval, manual trigger, seed burst, duplicate ratio), with its Dockerfile and compose service
 - [x] 3. **Event ingestion** - backend consumer group validates events, logs and skips invalid ones, and stores them idempotently in Postgres, with the backend test setup (JUnit, Mockito, Testcontainers) and its Dockerfile and compose service
-- [ ] 4. **Live service state in Redis** - atomic Lua apply-event: brief-style counters, active-per-severity health, open and active counts, timeline buckets, recent list, apply-once guard
+- [x] 4. **Live service state in Redis** - atomic Lua apply-event: brief-style counters, active-per-severity health, open and active counts, timeline buckets, recent list, apply-once guard
 - [ ] 5. **Events API** - filtered, searchable, paginated event list and event detail with ProblemDetail errors and Swagger docs
 - [ ] 6. **Incident status update** - lifecycle rules, 409 on invalid transitions, optimistic locking, atomic Redis counter and health update
 - [ ] 7. **Dashboard data APIs** - summary, services, timeline and recent-events endpoints with the summary cache

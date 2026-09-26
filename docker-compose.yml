@@ -110,12 +110,15 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-incidents}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-rail_ops}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-rail_ops_local_only}
+      SPRING_DATA_REDIS_HOST: redis
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
     depends_on:
       kafka:
         condition: service_healthy
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fs", "http://localhost:8080/actuator/health"]
