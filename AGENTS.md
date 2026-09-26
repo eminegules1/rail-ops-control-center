@@ -297,18 +297,28 @@ checks do not make the Blueprint unusable.
 ## Commands
 
 The React + TypeScript + Vite frontend lives in `frontend/` (npm,
-`frontend/package-lock.json`). The planned `backend/` and `producer/` Maven
-modules do not exist yet; add their commands here when the build plan creates
-them.
+`frontend/package-lock.json`). Java modules build with Maven from the root
+`pom.xml` (Java 21, Spring Boot 3.5); `producer/` exists, and the planned
+`backend/` module adds its commands here when the build plan creates it.
 
 Local stack (repository root, Docker Desktop running; no `.env` required):
 
-- Start and wait for health: `docker compose up -d --wait`
+- Build app images, start, and wait for health: `docker compose up -d --build --wait`
 - Status: `docker compose ps`
 - Stop (keep data): `docker compose down`
 - Reset all data: `docker compose down -v`
 - Kafka UI: http://localhost:8081; Kafka `localhost:9092` (host) or
   `kafka:29092` (containers)
+- Producer: http://localhost:8082 (`POST /produce?count=N`,
+  `GET /actuator/health`)
+
+Producer (repository root, JDK 21 + Maven 3.9 on PATH):
+
+- Producer tests: `mvn -B -pl producer -am verify` (JUnit 5, Mockito,
+  `@WebMvcTest`; tests live under `producer/src/test/java`)
+- Without a local JDK: `docker run --rm -v "${PWD}:/workspace" -w /workspace
+  -v rail-ops-m2:/root/.m2 maven:3.9-eclipse-temurin-21 mvn -B -pl producer -am verify`
+  (in Git Bash, prefix `MSYS_NO_PATHCONV=1`)
 
 Frontend commands run from `frontend/` (or use `npm --prefix frontend run <script>`
 from the root):
@@ -318,9 +328,9 @@ from the root):
 - Preview production build: `npm run preview`
 - Lint: `npm run lint` (ESLint flat config)
 
-No test command is configured yet, so tests are not a gate. Run `/tests` or
-`$tests` to add one (Vitest + React Testing Library is the planned stack) and
-update this section with the real test commands. No `Verify` command exists yet.
+The producer test command above is a gate for logic-bearing producer steps. The
+frontend has no test command yet; run `/tests` or `$tests` to add one (Vitest +
+React Testing Library is the planned stack). No `Verify` command exists yet.
 
 Browser testing is also opt-in. Run `/tests browser` or `$tests browser` to add
 or normalize a browser harness and document its exact command as `Browser

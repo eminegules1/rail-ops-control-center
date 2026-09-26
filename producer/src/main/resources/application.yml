@@ -1,0 +1,35 @@
+spring:
+  application:
+    name: producer
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      # Fail fast when Kafka is down instead of blocking callers for the 60s+ client defaults.
+      properties:
+        max.block.ms: 5000
+        request.timeout.ms: 5000
+        delivery.timeout.ms: 10000
+        # The seed burst hits a just-created topic; with several batches in flight, a rejected first batch
+        # (leader not ready) left sequence gaps and lost events. One in-flight request keeps retries in order.
+        max.in.flight.requests.per.connection: 1
+  mvc:
+    problemdetails:
+      enabled: true
+
+producer:
+  interval-ms: ${PRODUCER_INTERVAL_MS:2000}
+  duplicate-ratio: ${PRODUCER_DUPLICATE_RATIO:0.05}
+  seed-count: ${PRODUCER_SEED_COUNT:200}
+  topic:
+    name: incident-events
+    partitions: 3
+    retention: 24h
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health

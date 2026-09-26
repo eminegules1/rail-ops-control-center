@@ -1,0 +1,5 @@
+# Allowlist: only what the Maven module images need. Each new module adds its own entry.
+*
+!pom.xml
+!producer/
+producer/target/

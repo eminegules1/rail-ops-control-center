@@ -14,7 +14,9 @@ Redis live state, and a React dashboard shows service health and incidents live.
 ## Repository layout
 
 - `frontend/` - React + TypeScript + Vite dashboard
-- `backend/`, `producer/` - Spring Boot modules (planned)
+- `producer/` - Spring Boot app that publishes simulated incident events to Kafka
+- `backend/` - Spring Boot processing and API service (planned)
+- `pom.xml` - Maven parent for the Java modules
 - `docker-compose.yml` - local stack
 
 ## Local infrastructure
@@ -24,7 +26,7 @@ Redis live state, and a React dashboard shows service health and incidents live.
 From the repository root:
 
 ```bash
-docker compose up -d --wait   # start everything and wait until healthy
+docker compose up -d --build --wait   # build app images, start everything, wait until healthy
 docker compose ps             # every service should show (healthy)
 docker compose logs -f kafka  # follow one service's logs
 docker compose down           # stop, keeping data
@@ -35,6 +37,7 @@ docker compose down -v        # stop and DELETE all data (Kafka, Redis, Postgres
 |---|---|---|
 | Kafka | `localhost:9092` | `kafka:29092` |
 | Kafka UI | http://localhost:8081 | - |
+| Producer | http://localhost:8082 | `producer:8080` |
 | Redis | `localhost:6379` | `redis:6379` |
 | PostgreSQL | `localhost:5432`, database `incidents` | `postgres:5432` |
 
@@ -52,6 +55,51 @@ local demo default only; applications read credentials from the same
 environment variables and never hardcode them. A production deployment would
 take credentials from a secrets manager or Docker secrets and would not publish
 these ports. All ports are bound to `127.0.0.1`.
+
+## Event producer
+
+`producer/` is a small Spring Boot app that simulates rail control systems
+(ATS, CBTC, SCADA, TMS, PIS). It publishes JSON incident events to the Kafka
+topic `incident-events`, keyed by service so each service's events stay in
+order on one partition. It declares the topic itself (3 partitions, 24h
+retention), because the broker does not auto-create topics.
+
+```json
+{"eventId":"EVT-3f1c2a9e-8b7d-4e21-9c55-0a6b1d2e3f40","source":"CBTC","service":"signal-service","severity":"CRITICAL","message":"Signal SG-14 failed to clear","status":"OPEN","timestamp":"2026-09-26T14:30:05.123Z"}
+```
+
+It sends events in three ways:
+
+- **Seed burst:** about 200 events at startup, timestamped across the last
+  hour, so the dashboard is never empty. Every restart seeds again.
+- **Auto mode:** one event every `PRODUCER_INTERVAL_MS`.
+- **Manual burst:** `curl -X POST "http://localhost:8082/produce?count=50"`
+  returns `{"sent":50,"duplicates":2}` once Kafka confirms every event.
+  `count` is 1-1000 (default 1). An invalid value returns a 400 problem
+  response, and a Kafka outage returns 503.
+
+Severity and status are weighted towards realistic values (mostly `INFO` and
+`OPEN`). A share of sends (`PRODUCER_DUPLICATE_RATIO`) re-sends an earlier event
+unchanged, with the same `eventId` and payload, to exercise idempotent
+processing downstream.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PRODUCER_INTERVAL_MS` | `2000` | Delay between auto-mode events (min 100) |
+| `PRODUCER_DUPLICATE_RATIO` | `0.05` | Share of sends that re-send a recent event (0-1) |
+| `PRODUCER_PORT` | `8082` | Host port for `/produce` and `/actuator/health` |
+
+To watch the events, open Kafka UI (http://localhost:8081) and go to
+**Topics > incident-events > Messages**.
+
+Build and test the module (JDK 21 and Maven 3.9 from the repository root):
+
+```bash
+mvn -pl producer -am verify
+```
+
+To run it from an IDE against the compose Kafka, start the stack and run
+`ProducerApplication`. It connects to `localhost:9092` by default.
 
 ## Frontend
 

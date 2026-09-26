@@ -5,7 +5,7 @@
 Every app feature adds its own Dockerfile and compose service and updates the README, so `docker compose up --build` always runs what exists. Features 1-10 are the runnable end-to-end version that covers every mandatory criterion (target: about day 3).
 
 - [x] 1. **Local infrastructure** - Compose stack for Kafka (KRaft), Kafka UI, Redis and Postgres with healthchecks and `.env.example`
-- [ ] 2. **Event producer** - Spring Boot app publishes UUID-keyed, schema-consistent JSON events (auto interval, manual trigger, seed burst, duplicate ratio), with its Dockerfile and compose service
+- [x] 2. **Event producer** - Spring Boot app publishes UUID-keyed, schema-consistent JSON events (auto interval, manual trigger, seed burst, duplicate ratio), with its Dockerfile and compose service
 - [ ] 3. **Event ingestion** - backend consumer group validates events, logs and skips invalid ones, and stores them idempotently in Postgres, with the backend test setup (JUnit, Mockito, Testcontainers) and its Dockerfile and compose service
 - [ ] 4. **Live service state in Redis** - atomic Lua apply-event: brief-style counters, active-per-severity health, open and active counts, timeline buckets, recent list, apply-once guard
 - [ ] 5. **Events API** - filtered, searchable, paginated event list and event detail with ProblemDetail errors and Swagger docs
