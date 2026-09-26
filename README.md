@@ -15,7 +15,7 @@ Redis live state, and a React dashboard shows service health and incidents live.
 
 - `frontend/` - React + TypeScript + Vite dashboard
 - `producer/` - Spring Boot app that publishes simulated incident events to Kafka
-- `backend/` - Spring Boot processing and API service (planned)
+- `backend/` - Spring Boot service that consumes events from Kafka and stores them in PostgreSQL
 - `pom.xml` - Maven parent for the Java modules
 - `docker-compose.yml` - local stack
 
@@ -38,6 +38,7 @@ docker compose down -v        # stop and DELETE all data (Kafka, Redis, Postgres
 | Kafka | `localhost:9092` | `kafka:29092` |
 | Kafka UI | http://localhost:8081 | - |
 | Producer | http://localhost:8082 | `producer:8080` |
+| Backend | http://localhost:8080 | `backend:8080` |
 | Redis | `localhost:6379` | `redis:6379` |
 | PostgreSQL | `localhost:5432`, database `incidents` | `postgres:5432` |
 
@@ -100,6 +101,72 @@ mvn -pl producer -am verify
 
 To run it from an IDE against the compose Kafka, start the stack and run
 `ProducerApplication`. It connects to `localhost:9092` by default.
+
+## Event ingestion (backend)
+
+`backend/` is a Spring Boot service that consumes `incident-events` in the
+consumer group `incident-processor` (3 listener threads, one per partition) and
+stores every valid event in the PostgreSQL table `events`. Flyway creates the
+schema on startup.
+
+Processing is at-least-once and idempotent. For each record the backend:
+
+1. validates the payload,
+2. runs `INSERT ... ON CONFLICT (event_id) DO NOTHING`,
+3. commits the Kafka offset only after the insert has committed.
+
+A redelivered or duplicated event (the producer re-sends some on purpose) is
+therefore stored once. The first stored copy wins, and the backend logs
+`Duplicate event <id> skipped`.
+
+A message is **invalid** when any of these apply:
+
+- it is not readable JSON, or `severity`/`status`/`timestamp` has an unknown
+  value (enum values are case-sensitive names, never numbers; `timestamp` is an
+  ISO-8601 string, never an epoch number)
+- `timestamp` is before 2000-01-01 or in year 10000 or later
+- `eventId`, `service` or `message` is blank, or `eventId`/`service` is longer
+  than 64 characters
+- `source` is not exactly one of `ATS`, `CBTC`, `SCADA`, `TMS`, `PIS`
+- PostgreSQL rejects the data anyway
+
+Invalid messages are logged with their partition and offset and skipped, and
+their offset is committed. For now they are only logged; a later feature sends
+them to a dead-letter topic. Any other failure, such as PostgreSQL being down,
+is retried every 2 seconds until it succeeds, so valid events are never
+dropped.
+
+Inspect stored events:
+
+```bash
+docker compose exec postgres psql -U rail_ops -d incidents   -c "select event_id, source, service, severity, status, timestamp from events order by timestamp desc limit 10;"
+```
+
+Publish an invalid message by hand and watch the backend skip it (in Git Bash,
+prefix the command with `MSYS_NO_PATHCONV=1`):
+
+```bash
+echo '{not json' | docker compose exec -T kafka /opt/kafka/bin/kafka-console-producer.sh   --bootstrap-server kafka:29092 --topic incident-events
+docker compose logs backend | grep "Skipping invalid"
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `BACKEND_PORT` | `8080` | Host port for the backend (`/actuator/health`) |
+
+If port 8080 is already taken on your machine, set `BACKEND_PORT` in `.env`.
+
+Build and test the module from the repository root with JDK 21 and Maven 3.9.
+The tests start Kafka and PostgreSQL with Testcontainers, so Docker Desktop
+must be running:
+
+```bash
+mvn -pl backend -am verify
+```
+
+To run it from an IDE against the compose stack, start the stack and run
+`BackendApplication`. It connects to `localhost:9092` and
+`localhost:5432/incidents` by default.
 
 ## Frontend
 

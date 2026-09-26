@@ -5,14 +5,14 @@ COPY pom.xml .
 # The reactor needs every module pom listed in the root pom, even with -pl.
 COPY producer/pom.xml producer/
 COPY backend/pom.xml backend/
-RUN mvn -B -q -pl producer -am dependency:go-offline
-COPY producer/src producer/src
-RUN mvn -B -q -pl producer -am -DskipTests package
+RUN mvn -B -q -pl backend -am dependency:go-offline
+COPY backend/src backend/src
+RUN mvn -B -q -pl backend -am -DskipTests package
 
 FROM eclipse-temurin:21-jre
-RUN useradd --system --no-create-home producer
+RUN useradd --system --no-create-home backend
 WORKDIR /app
-COPY --from=build /workspace/producer/target/producer.jar producer.jar
-USER producer
+COPY --from=build /workspace/backend/target/backend.jar backend.jar
+USER backend
 EXPOSE 8080
-ENTRYPOINT ["java", "-jar", "/app/producer.jar"]
+ENTRYPOINT ["java", "-jar", "/app/backend.jar"]

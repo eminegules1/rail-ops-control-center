@@ -3,3 +3,5 @@
 !pom.xml
 !producer/
 producer/target/
+!backend/
+backend/target/

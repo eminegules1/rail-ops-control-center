@@ -298,8 +298,9 @@ checks do not make the Blueprint unusable.
 
 The React + TypeScript + Vite frontend lives in `frontend/` (npm,
 `frontend/package-lock.json`). Java modules build with Maven from the root
-`pom.xml` (Java 21, Spring Boot 3.5); `producer/` exists, and the planned
-`backend/` module adds its commands here when the build plan creates it.
+`pom.xml` (Java 21, Spring Boot 3.5) with modules `producer/` and `backend/`.
+Each module Dockerfile copies every module pom, so a new module must be added to
+all of them.
 
 Local stack (repository root, Docker Desktop running; no `.env` required):
 
@@ -311,6 +312,8 @@ Local stack (repository root, Docker Desktop running; no `.env` required):
   `kafka:29092` (containers)
 - Producer: http://localhost:8082 (`POST /produce?count=N`,
   `GET /actuator/health`)
+- Backend: http://localhost:8080 (`GET /actuator/health`; override the host
+  port with `BACKEND_PORT` if 8080 is taken)
 
 Producer (repository root, JDK 21 + Maven 3.9 on PATH):
 
@@ -320,6 +323,13 @@ Producer (repository root, JDK 21 + Maven 3.9 on PATH):
   -v rail-ops-m2:/root/.m2 maven:3.9-eclipse-temurin-21 mvn -B -pl producer -am verify`
   (in Git Bash, prefix `MSYS_NO_PATHCONV=1`)
 
+Backend (repository root, JDK 21 + Maven 3.9 on PATH, Docker Desktop running):
+
+- Backend tests: `mvn -B -pl backend -am verify` (JUnit 5, Mockito,
+  Testcontainers Kafka + PostgreSQL; tests live under `backend/src/test/java`).
+  The dockerized-Maven fallback cannot run these tests because it has no Docker
+  access.
+
 Frontend commands run from `frontend/` (or use `npm --prefix frontend run <script>`
 from the root):
 
@@ -328,7 +338,8 @@ from the root):
 - Preview production build: `npm run preview`
 - Lint: `npm run lint` (ESLint flat config)
 
-The producer test command above is a gate for logic-bearing producer steps. The
+The producer and backend test commands above are gates for logic-bearing steps
+in their modules. The
 frontend has no test command yet; run `/tests` or `$tests` to add one (Vitest +
 React Testing Library is the planned stack). No `Verify` command exists yet.
 

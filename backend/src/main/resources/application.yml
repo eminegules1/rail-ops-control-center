@@ -1,0 +1,51 @@
+spring:
+  application:
+    name: backend
+  datasource:
+    # Host-run defaults match the compose demo defaults; the compose service sets SPRING_DATASOURCE_*.
+    url: jdbc:postgresql://localhost:${POSTGRES_PORT:5432}/${POSTGRES_DB:incidents}
+    username: ${POSTGRES_USER:rail_ops}
+    password: ${POSTGRES_PASSWORD:rail_ops_local_only}
+    hikari:
+      # Fail fast (ms) while Postgres is down (default 30000): the listener retries sooner after it returns,
+      # and /actuator/health answers within the compose healthcheck timeout.
+      connection-timeout: 5000
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: incident-processor
+      # Events published before the backend first starts (the seed burst) are still consumed.
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      # Undeserializable records reach the error handler as a non-retryable DeserializationException
+      # instead of failing every poll.
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.deserializer.value.delegate.class: com.railops.backend.IncidentEventDeserializer
+    listener:
+      concurrency: 3
+      # Offsets are committed only after the event is stored; MANUAL_IMMEDIATE also lets the error
+      # handler commit the offsets of skipped invalid records.
+      ack-mode: manual_immediate
+
+ingestion:
+  topic:
+    name: incident-events
+    partitions: 3
+    retention: 24h
+
+logging:
+  level:
+    # Hibernate logs the whole failing row (event values) when Postgres rejects an insert; the Kafka error
+    # handler already logs skips and retries with the SQL state only.
+    org.hibernate.engine.jdbc.spi.SqlExceptionHelper: off
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health

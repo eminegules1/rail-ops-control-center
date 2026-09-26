@@ -23,5 +23,6 @@
 
     <modules>
         <module>producer</module>
+        <module>backend</module>
     </modules>
 </project>
