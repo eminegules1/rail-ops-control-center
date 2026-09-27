@@ -1,6 +1,6 @@
 -- apply-status-change: moves one applied event's contribution from one status to another, atomically.
 -- KEYS: 1 service:{name}, 2 status:{FROM}:count, 3 status:{TO}:count, 4 active:{SEV}:count,
---       5 cache:dashboard:summary
+--       5 cache:dashboard:summary, 6 cache:dashboard:summary:version
 -- ARGV: 1 severity, 2 from status, 3 to status
 -- Returns 1 when applied, 0 when the service has no live state (never applied, or Redis was wiped).
 -- The changes are additive, so two committed status changes end in the same state in either order.
@@ -43,6 +43,8 @@ elseif tonumber(counts[2]) > 0 or tonumber(counts[3]) > 0 then
 end
 redis.call('HSET', hash, 'status', health)
 
--- The next summary read rebuilds from the changed counters instead of waiting out the cache TTL.
+-- The next summary read rebuilds from the changed counters instead of waiting out the cache TTL. The version
+-- bump stops a summary built from the old counters, while this ran, from being cached (see cache-summary.lua).
 redis.call('DEL', KEYS[5])
+redis.call('INCR', KEYS[6])
 return 1

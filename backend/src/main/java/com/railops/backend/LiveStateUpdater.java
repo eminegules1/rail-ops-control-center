@@ -20,6 +20,8 @@ public class LiveStateUpdater {
     private static final DateTimeFormatter BUCKET = DateTimeFormatter.ofPattern("yyyyMMddHHmm").withZone(ZoneOffset.UTC);
     /** Read-through cache of the dashboard summary; an applied status change deletes it. */
     static final String SUMMARY_CACHE_KEY = "cache:dashboard:summary";
+    /** Bumped by every applied status change, so a summary built from older counters is not cached. */
+    static final String SUMMARY_VERSION_KEY = "cache:dashboard:summary:version";
     private static final RedisScript<Long> APPLY_EVENT =
             RedisScript.of(new ClassPathResource("redis/apply-event.lua"), Long.class);
     private static final RedisScript<Long> APPLY_STATUS_CHANGE =
@@ -55,8 +57,8 @@ public class LiveStateUpdater {
     }
 
     /**
-     * Moves one applied event from one status to another in the counters, active counts and service health, and
-     * deletes the cached dashboard summary.
+     * Moves one applied event from one status to another in the counters, active counts and service health,
+     * deletes the cached dashboard summary and bumps its version.
      *
      * @return true when applied, false when the service has no live state to update
      */
@@ -66,7 +68,8 @@ public class LiveStateUpdater {
                 "status:" + from + ":count",
                 "status:" + to + ":count",
                 "active:" + severity + ":count",
-                SUMMARY_CACHE_KEY);
+                SUMMARY_CACHE_KEY,
+                SUMMARY_VERSION_KEY);
         Long applied = redis.execute(APPLY_STATUS_CHANGE, keys, severity.name(), from.name(), to.name());
         return applied != null && applied == 1;
     }

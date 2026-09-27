@@ -196,6 +196,7 @@ counted once.
 | `recent:events` | List | the 50 most recently applied event ids, newest first |
 | `processed:{eventId}` | String | apply-once guard, 24h TTL |
 | `cache:dashboard:summary` | String | the dashboard summary JSON, 5s TTL (see [Dashboard data APIs](#dashboard-data-apis)) |
+| `cache:dashboard:summary:version` | String | counter bumped by every applied status change; a summary is cached only if it is unchanged |
 
 A service's `status` is recalculated from its active counts on every event:
 any active `CRITICAL` makes it `DOWN`, otherwise any active `MAJOR` or
@@ -377,7 +378,11 @@ minutes without events. Recent events use the event shape of
 
 The summary is cached in `cache:dashboard:summary` for 5 seconds. A status
 change deletes it in the same Lua script that updates the counters, so the next
-read shows the change. New events appear once the cache expires. An
+read shows the change. The script also bumps `cache:dashboard:summary:version`,
+and a summary is only cached (by the `cache-summary` Lua script) when that
+version is unchanged since the summary's counters were read, so a summary built
+while a status change lands is never cached. New events appear once the cache
+expires. An
 out-of-range or non-numeric `minutes` or `limit` returns 400 naming the
 parameter.
 

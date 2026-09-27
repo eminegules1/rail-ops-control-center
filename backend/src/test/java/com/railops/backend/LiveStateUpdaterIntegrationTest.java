@@ -265,6 +265,11 @@ class LiveStateUpdaterIntegrationTest {
         updater.applyStatusChange(SERVICE, Severity.CRITICAL, EventStatus.OPEN, EventStatus.ACKNOWLEDGED);
 
         assertThat(redis.hasKey(LiveStateUpdater.SUMMARY_CACHE_KEY)).isFalse();
+        assertThat(counter(LiveStateUpdater.SUMMARY_VERSION_KEY)).isEqualTo("1");
+
+        updater.applyStatusChange(SERVICE, Severity.CRITICAL, EventStatus.ACKNOWLEDGED, EventStatus.RESOLVED);
+
+        assertThat(counter(LiveStateUpdater.SUMMARY_VERSION_KEY)).isEqualTo("2");
     }
 
     @Test
@@ -274,6 +279,7 @@ class LiveStateUpdaterIntegrationTest {
         updater.applyStatusChange(SERVICE, Severity.CRITICAL, EventStatus.OPEN, EventStatus.RESOLVED);
 
         assertThat(redis.opsForValue().get(LiveStateUpdater.SUMMARY_CACHE_KEY)).isEqualTo("{}");
+        assertThat(redis.hasKey(LiveStateUpdater.SUMMARY_VERSION_KEY)).isFalse();
     }
 
     @Test

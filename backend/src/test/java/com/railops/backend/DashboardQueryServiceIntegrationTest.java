@@ -119,6 +119,32 @@ class DashboardQueryServiceIntegrationTest {
     }
 
     @Test
+    void summaryBuiltWhileAStatusChangeLandsIsNotCached() {
+        updater.applyEvent("EVT-1", "signal-service", Severity.CRITICAL, EventStatus.OPEN, Instant.now());
+        // summary() reads the version, then builds; the status change lands before the build is cached.
+        String version = redis.opsForValue().get(LiveStateUpdater.SUMMARY_VERSION_KEY);
+        DashboardSummary stale = dashboard.buildSummary();
+        updater.applyStatusChange("signal-service", Severity.CRITICAL, EventStatus.OPEN, EventStatus.RESOLVED);
+
+        assertThat(dashboard.cacheSummary(stale, version)).isFalse();
+
+        assertThat(redis.hasKey(LiveStateUpdater.SUMMARY_CACHE_KEY)).isFalse();
+        assertThat(stale.criticalEvents()).isEqualTo(1);
+        assertThat(dashboard.summary().criticalEvents()).isZero();
+    }
+
+    @Test
+    void summaryIsCachedWhenTheVersionIsUnchanged() {
+        updater.applyEvent("EVT-1", "signal-service", Severity.CRITICAL, EventStatus.OPEN, Instant.now());
+        updater.applyStatusChange("signal-service", Severity.CRITICAL, EventStatus.OPEN, EventStatus.ACKNOWLEDGED);
+        String version = redis.opsForValue().get(LiveStateUpdater.SUMMARY_VERSION_KEY);
+
+        assertThat(dashboard.cacheSummary(dashboard.buildSummary(), version)).isTrue();
+
+        assertThat(redis.getExpire(LiveStateUpdater.SUMMARY_CACHE_KEY)).isBetween(1L, 5L);
+    }
+
+    @Test
     void unreadableCacheEntryIsRebuilt() {
         updater.applyEvent("EVT-1", "signal-service", Severity.INFO, EventStatus.OPEN, Instant.now());
         redis.opsForValue().set(LiveStateUpdater.SUMMARY_CACHE_KEY, "not json");

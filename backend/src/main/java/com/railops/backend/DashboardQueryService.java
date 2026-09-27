@@ -15,8 +15,10 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
 
 /** Read side of the dashboard: Redis live state, plus Postgres rows for the recent events. */
@@ -24,6 +26,8 @@ import org.springframework.stereotype.Service;
 public class DashboardQueryService {
 
     static final Duration SUMMARY_TTL = Duration.ofSeconds(5);
+    private static final RedisScript<Long> CACHE_SUMMARY =
+            RedisScript.of(new ClassPathResource("redis/cache-summary.lua"), Long.class);
 
     private final StringRedisTemplate redis;
     private final IncidentEventRepository repository;
@@ -35,9 +39,14 @@ public class DashboardQueryService {
         this.json = json;
     }
 
-    /** The cached summary when present; otherwise builds it from the counters and caches it for 5s. */
+    /**
+     * The cached summary when present; otherwise builds it from the counters and caches it for 5s, unless a status
+     * change was applied while it was being built.
+     */
     public DashboardSummary summary() {
-        String cached = redis.opsForValue().get(LiveStateUpdater.SUMMARY_CACHE_KEY);
+        List<String> entry = redis.opsForValue().multiGet(
+                List.of(LiveStateUpdater.SUMMARY_CACHE_KEY, LiveStateUpdater.SUMMARY_VERSION_KEY));
+        String cached = entry.get(0);
         if (cached != null) {
             try {
                 return json.readValue(cached, DashboardSummary.class);
@@ -46,13 +55,27 @@ public class DashboardQueryService {
             }
         }
         DashboardSummary summary = buildSummary();
+        cacheSummary(summary, entry.get(1));
+        return summary;
+    }
+
+    /**
+     * Caches {@code summary} for 5s if the summary version still equals {@code version}, read before the summary
+     * was built. A status change bumps the version, so a summary built from the counters it changed is not cached.
+     *
+     * @return true when cached
+     */
+    boolean cacheSummary(DashboardSummary summary, String version) {
+        String value;
         try {
-            redis.opsForValue().set(LiveStateUpdater.SUMMARY_CACHE_KEY, json.writeValueAsString(summary),
-                    SUMMARY_TTL);
+            value = json.writeValueAsString(summary);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Dashboard summary is not serializable", e);
         }
-        return summary;
+        Long cached = redis.execute(CACHE_SUMMARY,
+                List.of(LiveStateUpdater.SUMMARY_CACHE_KEY, LiveStateUpdater.SUMMARY_VERSION_KEY),
+                value, version == null ? "" : version, Long.toString(SUMMARY_TTL.toMillis()));
+        return cached != null && cached == 1;
     }
 
     /** Every known service's live state, sorted by name. */
@@ -126,7 +149,7 @@ public class DashboardQueryService {
                 .toList();
     }
 
-    private DashboardSummary buildSummary() {
+    DashboardSummary buildSummary() {
         List<String> keys = new ArrayList<>(List.of("events:count", "status:OPEN:count",
                 "status:ACKNOWLEDGED:count", "active:CRITICAL:count"));
         for (Severity severity : Severity.values()) {
