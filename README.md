@@ -395,7 +395,7 @@ be reloaded or linked directly.
 | `/dashboard` | KPI cards, service health, severity and events-over-time charts, recent events |
 | `/events` | server-paginated events table with filters and search in the query string |
 | `/events/:eventId` | the events page with that event's detail drawer open |
-| `/services` | placeholder until the service status page lands |
+| `/services` | per-service health, open and active incident counts, latest severity, last event |
 
 The dashboard polls the dashboard APIs every 5 seconds (the summary cache
 lifetime); polling pauses while the browser tab is hidden. If the backend is
@@ -417,6 +417,12 @@ The new status shows at once; if the backend rejects the change (for example a
 409 for an invalid transition or an overlapping update) it rolls back and the
 reason appears in an error message. The table and drawer poll every 5 seconds
 like the dashboard, pausing while a status change is in flight.
+
+The services page lists every service that has reported, sorted by name, with
+its health, open incidents (the main column), active incidents (open or
+acknowledged), latest severity and last event time, refreshed every 5 seconds.
+Each service name opens the events page filtered to that service. Before any
+event arrives it says so instead of showing an empty table.
 
 For development, run the Vite dev server against the backend on the host
 (`BACKEND_PORT`, default 8080):

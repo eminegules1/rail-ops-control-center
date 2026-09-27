@@ -1,6 +1,6 @@
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
-import { BackendErrorToast } from '../components/dashboard/BackendErrorToast'
+import { DashboardErrorToast } from '../components/dashboard/DashboardErrorToast'
 import { KpiCards } from '../components/dashboard/KpiCards'
 import { RecentEvents } from '../components/dashboard/RecentEvents'
 import { ServiceHealthGrid } from '../components/dashboard/ServiceHealthGrid'
@@ -21,7 +21,7 @@ export function DashboardPage() {
         <TimelineChart />
       </Box>
       <RecentEvents />
-      <BackendErrorToast />
+      <DashboardErrorToast />
     </Box>
   )
 }

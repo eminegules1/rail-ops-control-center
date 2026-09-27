@@ -1,6 +1,6 @@
 # Alstom Rail Operations Control Center - Project Overview
 
-<!-- blueprint:source-hash 55e2c801f1c6edb298f6e6796eed515209ad712d72e3492ac6c736960070cb47 -->
+<!-- blueprint:source-hash 61e9840dd0b49ede0d768dca8b047d3a1dd0d08653f19881f27fe9440849795d -->
 
 > Real-time railway operations and mobility incident monitoring: Kafka event
 > pipeline, Redis live state, PostgreSQL history, and a live React dashboard.
@@ -79,7 +79,8 @@ Features 1-10 cover every mandatory criterion. Improvements follow:
 12. **Real-time push** - STOMP broadcasts of created/updated events and throttled
     summary.
 13. **Live UI updates** - WebSocket patches TanStack Query caches, connection
-    chip, reconnect; polling becomes fallback only.
+    chip, reconnect; polling becomes fallback only; rows that were just
+    created or updated (including status changes) get a brief highlight.
 14. **Redis resilience** - circuit breaker, Postgres fallback for dashboard reads,
     reconcile-needed flag, pause-and-rebuild reconciler.
 15. **Observability** - JSON logs with `eventId` in MDC, Actuator health,

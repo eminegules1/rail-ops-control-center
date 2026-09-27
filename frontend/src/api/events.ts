@@ -3,7 +3,7 @@ import { toApiQuery } from '../lib/eventSearch'
 import type { EventSearch } from '../lib/eventSearch'
 import type { EventStatus, IncidentEvent } from '../types/dashboard'
 import type { EventPage } from '../types/events'
-import { fetchJson, retryUnlessClientError, sendJson } from './client'
+import { fetchJson, sendJson } from './client'
 import { DASHBOARD_POLL_MS } from './dashboard'
 
 export const eventKeys = {
@@ -29,7 +29,6 @@ export function useEvents(search: EventSearch) {
     queryKey: eventKeys.list(apiQuery),
     queryFn: () => fetchJson<EventPage>(`/api/events?${apiQuery}`),
     refetchInterval: usePollInterval(),
-    retry: retryUnlessClientError,
     // Keep the current page on screen while the next one loads.
     placeholderData: keepPreviousData,
   })
@@ -41,7 +40,6 @@ export function useEvent(eventId: string | undefined) {
     queryFn: () => fetchJson<IncidentEvent>(eventPath(eventId!)),
     enabled: eventId !== undefined,
     refetchInterval: usePollInterval(),
-    retry: retryUnlessClientError,
   })
 }
 

@@ -1,6 +1,4 @@
-import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
-import Snackbar from '@mui/material/Snackbar'
 import Typography from '@mui/material/Typography'
 import { useCallback, useMemo } from 'react'
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
@@ -8,6 +6,7 @@ import { useEvents } from '../api/events'
 import { EventDetailDrawer } from '../components/events/EventDetailDrawer'
 import { EventFilters } from '../components/events/EventFilters'
 import { EventTable } from '../components/events/EventTable'
+import { BackendErrorToast } from '../components/layout/BackendErrorToast'
 import { EMPTY_SEARCH, hasFilters, parseEventSearch, toEventSearchParams } from '../lib/eventSearch'
 import type { EventSearch } from '../lib/eventSearch'
 
@@ -45,11 +44,7 @@ export function EventsPage() {
         eventId={eventId}
         onClose={() => navigate({ pathname: '/events', search: location.search })}
       />
-      <Snackbar open={events.isError && !failedWithoutData} anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}>
-        <Alert severity="error" variant="filled">
-          Can't reach the backend - retrying
-        </Alert>
-      </Snackbar>
+      <BackendErrorToast open={events.isError && !failedWithoutData} />
     </Box>
   )
 }
