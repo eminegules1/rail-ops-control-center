@@ -8,7 +8,7 @@ Every app feature adds its own Dockerfile and compose service and updates the RE
 - [x] 2. **Event producer** - Spring Boot app publishes UUID-keyed, schema-consistent JSON events (auto interval, manual trigger, seed burst, duplicate ratio), with its Dockerfile and compose service
 - [x] 3. **Event ingestion** - backend consumer group validates events, logs and skips invalid ones, and stores them idempotently in Postgres, with the backend test setup (JUnit, Mockito, Testcontainers) and its Dockerfile and compose service
 - [x] 4. **Live service state in Redis** - atomic Lua apply-event: brief-style counters, active-per-severity health, open and active counts, timeline buckets, recent list, apply-once guard
-- [ ] 5. **Events API** - filtered, searchable, paginated event list and event detail with ProblemDetail errors and Swagger docs
+- [x] 5. **Events API** - filtered, searchable, paginated event list and event detail with ProblemDetail errors and Swagger docs
 - [ ] 6. **Incident status update** - lifecycle rules, 409 on invalid transitions, optimistic locking, atomic Redis counter and health update
 - [ ] 7. **Dashboard data APIs** - summary, services, timeline and recent-events endpoints with the summary cache
 - [ ] 8. **Dashboard page** - app shell and routes, KPI cards, service health grid, severity and events-over-time charts, recent events list, polling refresh, with the frontend test setup (Vitest, RTL) and the nginx frontend compose service

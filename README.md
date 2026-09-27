@@ -15,7 +15,7 @@ Redis live state, and a React dashboard shows service health and incidents live.
 
 - `frontend/` - React + TypeScript + Vite dashboard
 - `producer/` - Spring Boot app that publishes simulated incident events to Kafka
-- `backend/` - Spring Boot service that consumes events from Kafka and stores them in PostgreSQL
+- `backend/` - Spring Boot service that consumes events from Kafka, stores them in PostgreSQL, keeps live state in Redis and serves the REST API
 - `pom.xml` - Maven parent for the Java modules
 - `docker-compose.yml` - local stack
 
@@ -209,6 +209,64 @@ docker compose exec redis redis-cli GET events:count
 docker compose exec redis redis-cli SMEMBERS services
 docker compose exec redis redis-cli HGETALL service:signal-service
 docker compose exec redis redis-cli LRANGE recent:events 0 9
+```
+
+## Events API
+
+The backend serves stored events from PostgreSQL. Interactive docs are at
+http://localhost:8080/swagger-ui/index.html (OpenAPI JSON at `/v3/api-docs`).
+
+| Method | Path | Returns |
+|---|---|---|
+| `GET` | `/api/events` | a page of events, newest first by default |
+| `GET` | `/api/events/{eventId}` | one event, or 404 |
+
+Query parameters for `/api/events` (all optional, combined with AND):
+
+| Parameter | Meaning |
+|---|---|
+| `severity` | `INFO`, `WARNING`, `MAJOR` or `CRITICAL` |
+| `status` | `OPEN`, `ACKNOWLEDGED` or `RESOLVED` |
+| `source`, `service` | exact, case-sensitive match |
+| `q` | case-insensitive text in `message`, `service` or `eventId` (at most 200 characters) |
+| `page` | zero-based page number, default 0 |
+| `size` | 1 to 100, default 20 |
+| `sort` | `field` or `field,asc\|desc` with `field` one of `timestamp`, `receivedAt`, `service`, `source`, `eventId`; default `timestamp,desc` |
+
+Severity and status are not sortable because they are stored as text and would
+sort alphabetically rather than by rank.
+
+A list response looks like this:
+
+```json
+{
+  "content": [
+    {
+      "eventId": "EVT-3f1c...",
+      "source": "CBTC",
+      "service": "signal-service",
+      "severity": "CRITICAL",
+      "message": "Signal failure at ...",
+      "status": "OPEN",
+      "timestamp": "2026-09-26T14:30:05.123Z",
+      "receivedAt": "2026-09-26T14:30:05.456Z",
+      "updatedAt": "2026-09-26T14:30:05.456Z"
+    }
+  ],
+  "page": 0,
+  "size": 20,
+  "totalElements": 137,
+  "totalPages": 7
+}
+```
+
+Errors use RFC 7807 problem details (`application/problem+json`): 404 for an
+unknown event id, 400 for an invalid parameter value, and 500 with a generic
+message for anything unexpected (details stay in the backend log).
+
+```bash
+curl "http://localhost:8080/api/events?severity=CRITICAL&status=OPEN&q=signal&size=5"
+curl "http://localhost:8080/api/events/EVT-10001"
 ```
 
 ## Frontend
