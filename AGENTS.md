@@ -314,6 +314,8 @@ Local stack (repository root, Docker Desktop running; no `.env` required):
   `GET /actuator/health`)
 - Backend: http://localhost:8080 (`GET /actuator/health`; override the host
   port with `BACKEND_PORT` if 8080 is taken)
+- Frontend (nginx): http://localhost:3000 (serves the built dashboard and
+  proxies `/api` to the backend; override with `FRONTEND_PORT`)
 
 Producer (repository root, JDK 21 + Maven 3.9 on PATH):
 
@@ -333,15 +335,16 @@ Backend (repository root, JDK 21 + Maven 3.9 on PATH, Docker Desktop running):
 Frontend commands run from `frontend/` (or use `npm --prefix frontend run <script>`
 from the root):
 
-- Dev server: `npm run dev` (Vite, http://localhost:5173)
+- Dev server: `npm run dev` (Vite, http://localhost:5173; proxies `/api` to
+  `http://localhost:${BACKEND_PORT:-8080}`)
+- Frontend tests: `npm test` (Vitest + React Testing Library, jsdom; tests live
+  next to source as `*.test.ts(x)`)
 - Build (typecheck + bundle): `npm run build` (`tsc -b && vite build`)
 - Preview production build: `npm run preview`
 - Lint: `npm run lint` (ESLint flat config)
 
-The producer and backend test commands above are gates for logic-bearing steps
-in their modules. The
-frontend has no test command yet; run `/tests` or `$tests` to add one (Vitest +
-React Testing Library is the planned stack). No `Verify` command exists yet.
+The producer, backend and frontend test commands above are gates for
+logic-bearing steps in their modules. No `Verify` command exists yet.
 
 Browser testing is also opt-in. Run `/tests browser` or `$tests browser` to add
 or normalize a browser harness and document its exact command as `Browser

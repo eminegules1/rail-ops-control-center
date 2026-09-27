@@ -35,6 +35,7 @@ docker compose down -v        # stop and DELETE all data (Kafka, Redis, Postgres
 
 | Service | From the host | From other containers |
 |---|---|---|
+| Dashboard (nginx) | http://localhost:3000 | `frontend:80` |
 | Kafka | `localhost:9092` | `kafka:29092` |
 | Kafka UI | http://localhost:8081 | - |
 | Producer | http://localhost:8082 | `producer:8080` |
@@ -382,10 +383,33 @@ these endpoints return 500 instead of falling back to PostgreSQL.
 
 ## Frontend
 
+The dashboard is a React + TypeScript + Vite app (React Router, TanStack
+Query, MUI, Recharts). With the compose stack running, open
+http://localhost:3000: nginx serves the built app and proxies `/api` to the
+backend, and any other path loads the app, so routes such as `/dashboard` can
+be reloaded or linked directly.
+
+| Route | Page |
+|---|---|
+| `/` | redirects to `/dashboard` |
+| `/dashboard` | KPI cards, service health, severity and events-over-time charts, recent events |
+| `/events`, `/services` | placeholders until the events and service status pages land |
+
+The dashboard polls the dashboard APIs every 5 seconds (the summary cache
+lifetime); polling pauses while the browser tab is hidden. If the backend is
+unreachable, each section keeps its last data or shows its error state, and a
+single "Can't reach the backend - retrying" message stays open until the API
+answers again. The top bar has a Light / Dark / System theme switch; the
+choice is remembered in the browser.
+
+For development, run the Vite dev server against the backend on the host
+(`BACKEND_PORT`, default 8080):
+
 ```bash
 cd frontend
 npm install
-npm run dev     # http://localhost:5173
-npm run build
+npm run dev     # http://localhost:5173, proxies /api to the backend
+npm test        # Vitest + React Testing Library
 npm run lint
+npm run build   # typecheck + production bundle
 ```
