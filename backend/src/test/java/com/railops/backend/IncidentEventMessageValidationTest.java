@@ -38,9 +38,16 @@ class IncidentEventMessageValidationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"EVT-10001", "any non-blank id"})
-    void acceptsAnyNonBlankEventId(String eventId) {
+    @ValueSource(strings = {"EVT-10001", "EVT-3f1c2a9e-8b7d-4e21-9c55-0a6b1d2e3f40", "a.b", "svc:1_x", "EVT."})
+    void acceptsUrlSafeEventId(String eventId) {
         assertThat(violations(withEventId(eventId))).isEmpty();
+    }
+
+    /** The API could not address these: a slash is rejected by Tomcat, dot-only segments are normalized away. */
+    @ParameterizedTest
+    @ValueSource(strings = {"EVT/1", "EVT\\1", ".", "..", ".hidden", "has space", "EVT;1", "EVT%2F1", "EVT?1", "ÉVT-1"})
+    void rejectsEventIdThatIsNotUrlSafe(String eventId) {
+        assertThat(violations(withEventId(eventId))).containsExactly("eventId");
     }
 
     @ParameterizedTest

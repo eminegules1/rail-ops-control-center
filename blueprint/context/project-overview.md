@@ -1,6 +1,6 @@
 # Alstom Rail Operations Control Center - Project Overview
 
-<!-- blueprint:source-hash 61e9840dd0b49ede0d768dca8b047d3a1dd0d08653f19881f27fe9440849795d -->
+<!-- blueprint:source-hash 5df4ea771cce4986117dffa6cb49849c5e677a4ae91668c8d51969234532542a -->
 
 > Real-time railway operations and mobility incident monitoring: Kafka event
 > pipeline, Redis live state, PostgreSQL history, and a live React dashboard.
@@ -116,7 +116,8 @@ reconciler can always rebuild from Postgres.
 ### Event (Postgres `events`, Flyway migration)
 
 - `eventId` (varchar, unique; column `event_id`) - producer uses `EVT-` + UUID;
-  the consumer accepts any non-blank string (e.g. a hand-published `EVT-10001`)
+  the consumer accepts any URL-safe id - letters, digits, `.` `_` `:` `-`, not
+  starting with a dot (e.g. a hand-published `EVT-10001`); others are skipped as invalid
 - `source` (varchar)
 - `service` (varchar) - e.g. `route-service`, `signal-service`, `train-tracking`
 - `severity` (enum `Severity`)

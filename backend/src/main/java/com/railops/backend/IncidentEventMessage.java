@@ -7,9 +7,13 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.time.Instant;
 
-/** Kafka payload from the producer. Sizes match the {@code events} columns so a valid message always fits. */
+/**
+ * Kafka payload from the producer. Sizes match the {@code events} columns so a valid message always fits, and
+ * {@code eventId} is limited to characters that are safe as one URL path segment, so {@code /api/events/{eventId}}
+ * can always address it ({@code /}, {@code \} and dot-only segments are rejected or rewritten by the server).
+ */
 public record IncidentEventMessage(
-        @NotBlank @Size(max = 64) String eventId,
+        @NotBlank @Size(max = 64) @Pattern(regexp = "[A-Za-z0-9_:-][A-Za-z0-9._:-]*") String eventId,
         @NotNull @Pattern(regexp = "ATS|CBTC|SCADA|TMS|PIS") String source,
         @NotBlank @Size(max = 64) String service,
         @NotNull Severity severity,

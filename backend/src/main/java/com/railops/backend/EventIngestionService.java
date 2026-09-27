@@ -33,9 +33,10 @@ public class EventIngestionService {
     public IngestionResult ingest(IncidentEventMessage event) {
         Set<ConstraintViolation<IncidentEventMessage>> violations = validator.validate(event);
         if (!violations.isEmpty()) {
-            // Field paths only: values are untrusted and may be long.
+            // Field paths only: values are untrusted and may be long. A field can break several rules; name it once.
             String fields = violations.stream()
                     .map(v -> v.getPropertyPath().toString())
+                    .distinct()
                     .sorted()
                     .collect(Collectors.joining(", "));
             throw new InvalidEventException("invalid fields: " + fields);

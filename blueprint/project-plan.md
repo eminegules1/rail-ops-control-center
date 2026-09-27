@@ -24,7 +24,7 @@ It is scored against a 100-point rubric plus 20 bonus points. Every design choic
 - A seed burst (~200 events) on startup, so the dashboard is never empty.
 - `PRODUCER_INVALID_RATIO` sends malformed messages on purpose, to demo error handling.
 - `eventId` = `EVT-` + random UUID, so IDs stay unique across restarts and multiple producer instances.
-  The consumer accepts any non-blank string id, so the brief's sample `EVT-10001` message can be published by hand.
+  The consumer accepts any URL-safe id (letters, digits, `.` `_` `:` `-`, not starting with a dot), so the brief's sample `EVT-10001` message can be published by hand; other ids are skipped as invalid.
 - `PRODUCER_DUPLICATE_RATIO` re-sends an earlier event to demo idempotency.
 
 **Kafka consumer / processor**

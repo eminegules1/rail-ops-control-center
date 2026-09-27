@@ -130,6 +130,9 @@ A message is **invalid** when any of these apply:
 - `timestamp` is before 2000-01-01 or in year 10000 or later
 - `eventId`, `service` or `message` is blank, or `eventId`/`service` is longer
   than 64 characters
+- `eventId` has a character other than letters, digits, `.`, `_`, `:` and `-`,
+  or starts with `.`, so every stored event can be opened at
+  `/api/events/{eventId}` (for example `EVT/1` or `..` is invalid)
 - `source` is not exactly one of `ATS`, `CBTC`, `SCADA`, `TMS`, `PIS`
 - PostgreSQL rejects the data anyway
 
