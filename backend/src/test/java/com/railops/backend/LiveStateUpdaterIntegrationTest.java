@@ -180,6 +180,91 @@ class LiveStateUpdaterIntegrationTest {
         assertThat(recent).hasSize(50).startsWith("EVT-55", "EVT-54").endsWith("EVT-6");
     }
 
+    @Test
+    void acknowledgingKeepsEventActiveButNotOpen() {
+        updater.applyEvent("EVT-1", SERVICE, Severity.CRITICAL, EventStatus.OPEN, Instant.now());
+
+        assertThat(updater.applyStatusChange(SERVICE, Severity.CRITICAL, EventStatus.OPEN, EventStatus.ACKNOWLEDGED))
+                .isTrue();
+
+        assertThat(counter("status:OPEN:count")).isEqualTo("0");
+        assertThat(counter("status:ACKNOWLEDGED:count")).isEqualTo("1");
+        assertThat(counter("active:CRITICAL:count")).isEqualTo("1");
+        assertThat(service())
+                .containsEntry("active:CRITICAL", "1")
+                .containsEntry("openCount", "0")
+                .containsEntry("activeCount", "1")
+                .containsEntry("status", "DOWN");
+    }
+
+    @Test
+    void resolvingLastActiveCriticalMakesServiceHealthyAndReopeningMakesItDownAgain() {
+        updater.applyEvent("EVT-1", SERVICE, Severity.CRITICAL, EventStatus.OPEN, Instant.now());
+        updater.applyEvent("EVT-2", SERVICE, Severity.INFO, EventStatus.OPEN, Instant.now());
+
+        updater.applyStatusChange(SERVICE, Severity.CRITICAL, EventStatus.OPEN, EventStatus.RESOLVED);
+
+        assertThat(counter("status:OPEN:count")).isEqualTo("1");
+        assertThat(counter("status:RESOLVED:count")).isEqualTo("1");
+        assertThat(counter("active:CRITICAL:count")).isEqualTo("0");
+        assertThat(service())
+                .containsEntry("active:CRITICAL", "0")
+                .containsEntry("openCount", "1")
+                .containsEntry("activeCount", "1")
+                .containsEntry("status", "HEALTHY");
+
+        updater.applyStatusChange(SERVICE, Severity.CRITICAL, EventStatus.RESOLVED, EventStatus.OPEN);
+
+        assertThat(counter("status:OPEN:count")).isEqualTo("2");
+        assertThat(counter("status:RESOLVED:count")).isEqualTo("0");
+        assertThat(counter("active:CRITICAL:count")).isEqualTo("1");
+        assertThat(service())
+                .containsEntry("active:CRITICAL", "1")
+                .containsEntry("openCount", "2")
+                .containsEntry("activeCount", "2")
+                .containsEntry("status", "DOWN");
+    }
+
+    @Test
+    void resolvingAcknowledgedWarningClearsDegradedHealth() {
+        updater.applyEvent("EVT-1", SERVICE, Severity.WARNING, EventStatus.ACKNOWLEDGED, Instant.now());
+
+        updater.applyStatusChange(SERVICE, Severity.WARNING, EventStatus.ACKNOWLEDGED, EventStatus.RESOLVED);
+
+        assertThat(counter("status:ACKNOWLEDGED:count")).isEqualTo("0");
+        assertThat(counter("status:RESOLVED:count")).isEqualTo("1");
+        assertThat(counter("active:WARNING:count")).isEqualTo("0");
+        assertThat(service())
+                .containsEntry("active:WARNING", "0")
+                .containsEntry("openCount", "0")
+                .containsEntry("activeCount", "0")
+                .containsEntry("status", "HEALTHY");
+    }
+
+    @Test
+    void statusChangeLeavesEventTotalsTimelineAndRecentListAlone() {
+        Instant now = Instant.now();
+        updater.applyEvent("EVT-1", SERVICE, Severity.MAJOR, EventStatus.OPEN, now);
+
+        updater.applyStatusChange(SERVICE, Severity.MAJOR, EventStatus.OPEN, EventStatus.RESOLVED);
+
+        assertThat(counter("events:count")).isEqualTo("1");
+        assertThat(counter("severity:MAJOR:count")).isEqualTo("1");
+        assertThat(timeline(now)).containsExactlyEntriesOf(Map.of("MAJOR", "1"));
+        assertThat(redis.opsForList().range("recent:events", 0, -1)).containsExactly("EVT-1");
+        assertThat(service())
+                .containsEntry("lastEventTime", LiveStateUpdater.EVENT_TIME.format(now))
+                .containsEntry("latestSeverity", "MAJOR");
+    }
+
+    @Test
+    void statusChangeForServiceWithoutLiveStateChangesNothing() {
+        assertThat(updater.applyStatusChange(SERVICE, Severity.CRITICAL, EventStatus.OPEN, EventStatus.RESOLVED))
+                .isFalse();
+
+        assertThat(redis.keys("*")).isEmpty();
+    }
+
     private static String counter(String key) {
         return redis.opsForValue().get(key);
     }

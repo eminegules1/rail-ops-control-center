@@ -98,4 +98,10 @@ public class IncidentEvent {
     public long getVersion() {
         return version;
     }
+
+    /** Callers enforce the lifecycle rules; Hibernate bumps {@code version} when the change is flushed. */
+    void changeStatus(EventStatus status, Instant updatedAt) {
+        this.status = status;
+        this.updatedAt = updatedAt;
+    }
 }

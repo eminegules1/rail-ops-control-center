@@ -17,6 +17,10 @@ spring:
       port: ${REDIS_PORT:6379}
       # Fail fast while Redis is down (Lettuce default 60s), like the Hikari timeout above.
       timeout: 2s
+  jackson:
+    deserialization:
+      # {"status":1} is a 400, not ACKNOWLEDGED by enum position.
+      fail-on-numbers-for-enums: true
   jpa:
     open-in-view: false
     hibernate:

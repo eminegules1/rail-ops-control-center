@@ -20,6 +20,8 @@ public class LiveStateUpdater {
     private static final DateTimeFormatter BUCKET = DateTimeFormatter.ofPattern("yyyyMMddHHmm").withZone(ZoneOffset.UTC);
     private static final RedisScript<Long> APPLY_EVENT =
             RedisScript.of(new ClassPathResource("redis/apply-event.lua"), Long.class);
+    private static final RedisScript<Long> APPLY_STATUS_CHANGE =
+            RedisScript.of(new ClassPathResource("redis/apply-status-change.lua"), Long.class);
 
     private final StringRedisTemplate redis;
 
@@ -47,6 +49,21 @@ public class LiveStateUpdater {
                 "recent:events");
         Long applied = redis.execute(APPLY_EVENT, keys, eventId, service, severity.name(), status.name(),
                 EVENT_TIME.format(timestamp), Long.toString(bucketStart.getEpochSecond()));
+        return applied != null && applied == 1;
+    }
+
+    /**
+     * Moves one applied event from one status to another in the counters, active counts and service health.
+     *
+     * @return true when applied, false when the service has no live state to update
+     */
+    public boolean applyStatusChange(String service, Severity severity, EventStatus from, EventStatus to) {
+        List<String> keys = List.of(
+                "service:" + service,
+                "status:" + from + ":count",
+                "status:" + to + ":count",
+                "active:" + severity + ":count");
+        Long applied = redis.execute(APPLY_STATUS_CHANGE, keys, severity.name(), from.name(), to.name());
         return applied != null && applied == 1;
     }
 }

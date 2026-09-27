@@ -269,6 +269,61 @@ curl "http://localhost:8080/api/events?severity=CRITICAL&status=OPEN&q=signal&si
 curl "http://localhost:8080/api/events/EVT-10001"
 ```
 
+## Incident status update
+
+`PUT /api/events/{eventId}/status` moves an incident through its lifecycle:
+
+| From | Allowed to |
+|---|---|
+| `OPEN` | `ACKNOWLEDGED`, `RESOLVED` |
+| `ACKNOWLEDGED` | `RESOLVED` |
+| `RESOLVED` | `OPEN` (reopen) |
+
+```bash
+curl -X PUT "http://localhost:8080/api/events/EVT-10001/status" \
+  -H "Content-Type: application/json" -d '{"status":"ACKNOWLEDGED"}'
+```
+
+A successful change returns 200 with the updated event (same shape as
+`GET /api/events/{eventId}`, with a new `updatedAt`). Sending the current
+status also returns 200 and changes nothing.
+
+| Case | Response |
+|---|---|
+| Transition not in the table | 409, `type: /problems/invalid-status-transition`, with `allowedTransitions` |
+| Another request changed the event at the same time | 409, title `Concurrent update`; reload and retry |
+| Unknown `eventId` | 404 |
+| Missing, unknown or numeric `status`, or a body that is not JSON | 400 naming `status` and its allowed values |
+
+```json
+{
+  "type": "/problems/invalid-status-transition",
+  "title": "Invalid status transition",
+  "status": 409,
+  "detail": "Cannot change status from RESOLVED to ACKNOWLEDGED",
+  "instance": "/api/events/EVT-10001/status",
+  "allowedTransitions": ["OPEN"]
+}
+```
+
+The change is committed to PostgreSQL first. Clients send no version: JPA
+optimistic locking (`@Version`) detects overlapping writes on the server. After
+the commit, the Lua script `apply-status-change` updates the Redis live state
+in one step: the `status:*:count` and `active:{SEV}:count` counters, and the
+service's `active:{SEV}`, `openCount`, `activeCount` and health. Event totals,
+the timeline, the recent list and `lastEventTime` are not touched, because a
+status change is not a new event.
+
+Known limitations until the reconciler (feature 14) lands:
+
+- If Redis is unavailable after the commit, the request still succeeds and
+  the backend logs a warning. Redis stays stale for that event until it is
+  rebuilt.
+- A status change to an event that ingestion has stored but not yet applied
+  to Redis can leave that event's counts stale. This happens when it is the
+  service's first event in Redis, or while ingestion is retrying after a Redis
+  outage. Normally the window is milliseconds.
+
 ## Frontend
 
 ```bash
