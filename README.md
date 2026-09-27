@@ -191,6 +191,7 @@ counted once.
 | `timeline:{yyyyMMddHHmm}` | Hash | events per severity in that UTC minute of the event `timestamp`; expires 2h after the minute |
 | `recent:events` | List | the 50 most recently applied event ids, newest first |
 | `processed:{eventId}` | String | apply-once guard, 24h TTL |
+| `cache:dashboard:summary` | String | the dashboard summary JSON, 5s TTL (see [Dashboard data APIs](#dashboard-data-apis)) |
 
 A service's `status` is recalculated from its active counts on every event:
 any active `CRITICAL` makes it `DOWN`, otherwise any active `MAJOR` or
@@ -323,6 +324,61 @@ Known limitations until the reconciler (feature 14) lands:
   to Redis can leave that event's counts stale. This happens when it is the
   service's first event in Redis, or while ingestion is retrying after a Redis
   outage. Normally the window is milliseconds.
+
+## Dashboard data APIs
+
+Read endpoints for the dashboard and service status pages. They read the Redis
+live state, and the recent events also load their rows from PostgreSQL.
+
+| Method | Path | Returns |
+|---|---|---|
+| `GET` | `/api/dashboard/summary` | totals, severity distribution and service health; cached up to 5s |
+| `GET` | `/api/services` | each service's live state, sorted by name |
+| `GET` | `/api/dashboard/timeline?minutes=60` | events per UTC minute by severity; `minutes` 1-120, default 60 |
+| `GET` | `/api/dashboard/recent-events?limit=20` | the most recently processed events, newest first; `limit` 1-50, default 20 |
+
+```bash
+curl "http://localhost:8080/api/dashboard/summary"
+curl "http://localhost:8080/api/services"
+curl "http://localhost:8080/api/dashboard/timeline?minutes=15"
+curl "http://localhost:8080/api/dashboard/recent-events?limit=5"
+```
+
+Summary:
+
+```json
+{
+  "totalEvents": 214,
+  "openEvents": 120,
+  "acknowledgedEvents": 30,
+  "criticalEvents": 12,
+  "severityDistribution": {"INFO": 90, "WARNING": 70, "MAJOR": 40, "CRITICAL": 14},
+  "services": [
+    {"name": "signal-service", "status": "DOWN", "lastEventTime": "2026-09-27T12:30:05.123Z"}
+  ]
+}
+```
+
+`criticalEvents` counts CRITICAL events that are not RESOLVED;
+`severityDistribution` counts all events. Service `status` is `HEALTHY`,
+`DEGRADED` (an active MAJOR or WARNING incident) or `DOWN` (an active CRITICAL
+incident).
+
+`/api/services` items add `latestSeverity`, `openCount` and `activeCount` to
+the summary's service fields. Timeline items look like
+`{"minute":"2026-09-27T12:30:00Z","counts":{"INFO":0,"WARNING":2,"MAJOR":0,"CRITICAL":1}}`:
+one per minute, oldest first, ending with the current minute, with zeros for
+minutes without events. Recent events use the event shape of
+`GET /api/events/{eventId}`.
+
+The summary is cached in `cache:dashboard:summary` for 5 seconds. A status
+change deletes it in the same Lua script that updates the counters, so the next
+read shows the change. New events appear once the cache expires. An
+out-of-range or non-numeric `minutes` or `limit` returns 400 naming the
+parameter.
+
+Known limitation until Redis resilience (feature 14): if Redis is unavailable,
+these endpoints return 500 instead of falling back to PostgreSQL.
 
 ## Frontend
 

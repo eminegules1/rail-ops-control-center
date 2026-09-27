@@ -10,7 +10,7 @@ Every app feature adds its own Dockerfile and compose service and updates the RE
 - [x] 4. **Live service state in Redis** - atomic Lua apply-event: brief-style counters, active-per-severity health, open and active counts, timeline buckets, recent list, apply-once guard
 - [x] 5. **Events API** - filtered, searchable, paginated event list and event detail with ProblemDetail errors and Swagger docs
 - [x] 6. **Incident status update** - lifecycle rules, 409 on invalid transitions, optimistic locking, atomic Redis counter and health update
-- [ ] 7. **Dashboard data APIs** - summary, services, timeline and recent-events endpoints with the summary cache
+- [x] 7. **Dashboard data APIs** - summary, services, timeline and recent-events endpoints with the summary cache
 - [ ] 8. **Dashboard page** - app shell and routes, KPI cards, service health grid, severity and events-over-time charts, recent events list, polling refresh, with the frontend test setup (Vitest, RTL) and the nginx frontend compose service
 - [ ] 9. **Events page** - paginated table with URL-synced filters and search, deep-linkable detail drawer, optimistic status change
 - [ ] 10. **Service status page** - per-service health, last event time, latest severity, open and active incident counts

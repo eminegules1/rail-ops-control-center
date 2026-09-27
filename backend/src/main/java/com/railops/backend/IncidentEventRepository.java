@@ -1,6 +1,8 @@
 package com.railops.backend;
 
 import java.time.Instant;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
@@ -13,6 +15,8 @@ public interface IncidentEventRepository extends JpaRepository<IncidentEvent, Lo
         JpaSpecificationExecutor<IncidentEvent> {
 
     Optional<IncidentEvent> findByEventId(String eventId);
+
+    List<IncidentEvent> findByEventIdIn(Collection<String> eventIds);
 
     /** Idempotent insert keyed by {@code event_id}; returns 1 when stored, 0 when the event already exists. */
     @Transactional

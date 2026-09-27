@@ -258,6 +258,25 @@ class LiveStateUpdaterIntegrationTest {
     }
 
     @Test
+    void statusChangeDeletesTheCachedSummary() {
+        updater.applyEvent("EVT-1", SERVICE, Severity.CRITICAL, EventStatus.OPEN, Instant.now());
+        redis.opsForValue().set(LiveStateUpdater.SUMMARY_CACHE_KEY, "{}");
+
+        updater.applyStatusChange(SERVICE, Severity.CRITICAL, EventStatus.OPEN, EventStatus.ACKNOWLEDGED);
+
+        assertThat(redis.hasKey(LiveStateUpdater.SUMMARY_CACHE_KEY)).isFalse();
+    }
+
+    @Test
+    void statusChangeWithoutLiveStateKeepsTheCachedSummary() {
+        redis.opsForValue().set(LiveStateUpdater.SUMMARY_CACHE_KEY, "{}");
+
+        updater.applyStatusChange(SERVICE, Severity.CRITICAL, EventStatus.OPEN, EventStatus.RESOLVED);
+
+        assertThat(redis.opsForValue().get(LiveStateUpdater.SUMMARY_CACHE_KEY)).isEqualTo("{}");
+    }
+
+    @Test
     void statusChangeForServiceWithoutLiveStateChangesNothing() {
         assertThat(updater.applyStatusChange(SERVICE, Severity.CRITICAL, EventStatus.OPEN, EventStatus.RESOLVED))
                 .isFalse();

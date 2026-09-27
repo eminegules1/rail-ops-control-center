@@ -18,6 +18,8 @@ public class LiveStateUpdater {
     static final DateTimeFormatter EVENT_TIME =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC);
     private static final DateTimeFormatter BUCKET = DateTimeFormatter.ofPattern("yyyyMMddHHmm").withZone(ZoneOffset.UTC);
+    /** Read-through cache of the dashboard summary; an applied status change deletes it. */
+    static final String SUMMARY_CACHE_KEY = "cache:dashboard:summary";
     private static final RedisScript<Long> APPLY_EVENT =
             RedisScript.of(new ClassPathResource("redis/apply-event.lua"), Long.class);
     private static final RedisScript<Long> APPLY_STATUS_CHANGE =
@@ -45,7 +47,7 @@ public class LiveStateUpdater {
                 "severity:" + severity + ":count",
                 "status:" + status + ":count",
                 "active:" + severity + ":count",
-                "timeline:" + BUCKET.format(bucketStart),
+                timelineKey(bucketStart),
                 "recent:events");
         Long applied = redis.execute(APPLY_EVENT, keys, eventId, service, severity.name(), status.name(),
                 EVENT_TIME.format(timestamp), Long.toString(bucketStart.getEpochSecond()));
@@ -53,7 +55,8 @@ public class LiveStateUpdater {
     }
 
     /**
-     * Moves one applied event from one status to another in the counters, active counts and service health.
+     * Moves one applied event from one status to another in the counters, active counts and service health, and
+     * deletes the cached dashboard summary.
      *
      * @return true when applied, false when the service has no live state to update
      */
@@ -62,8 +65,14 @@ public class LiveStateUpdater {
                 "service:" + service,
                 "status:" + from + ":count",
                 "status:" + to + ":count",
-                "active:" + severity + ":count");
+                "active:" + severity + ":count",
+                SUMMARY_CACHE_KEY);
         Long applied = redis.execute(APPLY_STATUS_CHANGE, keys, severity.name(), from.name(), to.name());
         return applied != null && applied == 1;
+    }
+
+    /** The timeline bucket key for the UTC minute starting at {@code minuteStart}. */
+    static String timelineKey(Instant minuteStart) {
+        return "timeline:" + BUCKET.format(minuteStart);
     }
 }
