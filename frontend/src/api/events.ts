@@ -45,11 +45,17 @@ export function useEvent(eventId: string | undefined) {
 
 type StatusChange = { eventId: string; status: EventStatus }
 
+/** Outcome callbacks. They run even if the caller has unmounted by the time the backend answers. */
+export type StatusChangeCallbacks = {
+  onSuccess?: (event: IncidentEvent) => void
+  onError?: (error: Error) => void
+}
+
 /**
  * Changes an incident's status optimistically: cached list pages and the detail show the new status at once,
  * and are restored if the backend rejects the change. Everything is refetched afterwards either way.
  */
-export function useChangeEventStatus() {
+export function useChangeEventStatus({ onSuccess, onError }: StatusChangeCallbacks = {}) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationKey: eventKeys.statusChange,
@@ -67,9 +73,11 @@ export function useChangeEventStatus() {
       if (detail) queryClient.setQueryData(eventKeys.detail(eventId), patch(detail))
       return { lists, detail }
     },
-    onError: (_error, { eventId }, snapshot) => {
+    onSuccess: (event) => onSuccess?.(event),
+    onError: (error, { eventId }, snapshot) => {
       snapshot?.lists.forEach(([key, page]) => queryClient.setQueryData(key, page))
       if (snapshot?.detail) queryClient.setQueryData(eventKeys.detail(eventId), snapshot.detail)
+      onError?.(error)
     },
     onSettled: () =>
       Promise.all([

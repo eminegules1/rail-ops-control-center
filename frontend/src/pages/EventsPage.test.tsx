@@ -240,4 +240,37 @@ describe('status change', () => {
     expect(within(drawer).getByText('OPEN')).toBeInTheDocument()
     expect(within(row).getByText('OPEN')).toBeInTheDocument()
   })
+
+  it('confirms a successful change, and the confirmation outlasts the drawer', async () => {
+    stubApi({ status: () => Response.json({ ...signalFailure, status: 'ACKNOWLEDGED' }) })
+    renderApp('/events/EVT-1')
+
+    const drawer = await screen.findByRole('dialog', { name: 'EVT-1' })
+    await userEvent.click(await within(drawer).findByRole('button', { name: 'Acknowledge' }))
+
+    const confirmation = await screen.findByRole('status')
+    expect(confirmation).toHaveTextContent('EVT-1 status changed to ACKNOWLEDGED')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+
+    await userEvent.click(within(drawer).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(screen.getByRole('status')).toHaveTextContent('EVT-1 status changed to ACKNOWLEDGED')
+  })
+
+  it('reports a rejection that arrives after the drawer was closed', async () => {
+    let reject: (response: Response) => void = () => {}
+    stubApi({ status: () => new Promise<Response>((resolve) => (reject = resolve)) })
+    renderApp('/events/EVT-1')
+
+    const drawer = await screen.findByRole('dialog', { name: 'EVT-1' })
+    await userEvent.click(await within(drawer).findByRole('button', { name: 'Resolve' }))
+    await userEvent.click(within(drawer).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    reject(problem(409, 'Cannot change status from OPEN to RESOLVED'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Cannot change status from OPEN to RESOLVED')
+    const row = screen.getByRole('link', { name: 'EVT-1' }).closest('tr')!
+    await waitFor(() => expect(within(row).getByText('OPEN')).toBeInTheDocument())
+  })
 })

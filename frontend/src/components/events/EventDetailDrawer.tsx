@@ -10,18 +10,19 @@ import { useId } from 'react'
 import type { ReactNode } from 'react'
 import { ApiError } from '../../api/client'
 import { useEvent } from '../../api/events'
+import type { StatusChangeCallbacks } from '../../api/events'
 import { formatDateTime } from '../../lib/format'
 import type { IncidentEvent } from '../../types/dashboard'
 import { SeverityChip } from '../dashboard/StatusChips'
 import { StatusActions } from './StatusActions'
 
-type Props = {
+type Props = StatusChangeCallbacks & {
   /** The event to show; the drawer is closed while undefined. */
   eventId: string | undefined
   onClose: () => void
 }
 
-export function EventDetailDrawer({ eventId, onClose }: Props) {
+export function EventDetailDrawer({ eventId, onClose, ...statusCallbacks }: Props) {
   const titleId = useId()
 
   return (
@@ -40,13 +41,13 @@ export function EventDetailDrawer({ eventId, onClose }: Props) {
             ×
           </IconButton>
         </Stack>
-        {eventId !== undefined && <EventDetail eventId={eventId} />}
+        {eventId !== undefined && <EventDetail eventId={eventId} {...statusCallbacks} />}
       </Box>
     </Drawer>
   )
 }
 
-function EventDetail({ eventId }: { eventId: string }) {
+function EventDetail({ eventId, ...statusCallbacks }: StatusChangeCallbacks & { eventId: string }) {
   const { data, isPending, error, refetch } = useEvent(eventId)
 
   if (isPending) return <Skeleton variant="rounded" height={320} />
@@ -69,13 +70,13 @@ function EventDetail({ eventId }: { eventId: string }) {
       </Alert>
     )
   }
-  return <EventFields event={data} />
+  return <EventFields event={data} {...statusCallbacks} />
 }
 
-function EventFields({ event }: { event: IncidentEvent }) {
+function EventFields({ event, ...statusCallbacks }: StatusChangeCallbacks & { event: IncidentEvent }) {
   return (
     <Stack spacing={2}>
-      <StatusActions event={event} />
+      <StatusActions event={event} {...statusCallbacks} />
       <Box component="dl" sx={{ m: 0, display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: 1, columnGap: 2 }}>
         <Field label="Event ID">{event.eventId}</Field>
         <Field label="Severity">
