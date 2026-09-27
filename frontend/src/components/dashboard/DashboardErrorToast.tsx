@@ -1,11 +1,9 @@
 import { useDashboardSummary, useRecentEvents, useTimeline } from '../../api/dashboard'
 import { BackendErrorToast } from '../layout/BackendErrorToast'
 
-/** Open while any dashboard query is failing, closed once all recover. */
+/** Open from the first failed attempt of any dashboard query, closed once all recover. */
 export function DashboardErrorToast() {
-  const summary = useDashboardSummary()
-  const timeline = useTimeline()
-  const recent = useRecentEvents()
+  const queries = [useDashboardSummary(), useTimeline(), useRecentEvents()]
 
-  return <BackendErrorToast open={summary.isError || timeline.isError || recent.isError} />
+  return <BackendErrorToast open={queries.some((query) => query.isError || query.failureCount > 0)} />
 }

@@ -400,8 +400,8 @@ be reloaded or linked directly.
 The dashboard polls the dashboard APIs every 5 seconds (the summary cache
 lifetime); polling pauses while the browser tab is hidden. If the backend is
 unreachable, each section keeps its last data or shows its error state, and a
-single "Can't reach the backend - retrying" message stays open until the API
-answers again. The top bar has a Light / Dark / System theme switch; the
+single "Can't reach the backend - retrying" message appears on the first failed
+request (within a few seconds) and stays open until the API answers again. The top bar has a Light / Dark / System theme switch; the
 choice is remembered in the browser.
 
 The events page keeps its state in the URL, so any view can be reloaded,

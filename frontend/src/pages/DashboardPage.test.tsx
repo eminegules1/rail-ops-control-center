@@ -1,3 +1,4 @@
+import { QueryClient } from '@tanstack/react-query'
 import { screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderApp } from '../test/renderApp'
@@ -137,5 +138,27 @@ describe('dashboard page', () => {
     expect(screen.getByText("Couldn't load recent events.")).toBeInTheDocument()
     expect(screen.getByText("Couldn't load severity distribution.")).toBeInTheDocument()
     expect(within(screen.getByRole('region', { name: 'Total events' })).getByText('—')).toBeInTheDocument()
+  })
+
+  it('shows the backend toast while a failed query is still retrying', async () => {
+    let summaryCalls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.startsWith('/api/dashboard/summary')) {
+          summaryCalls += 1
+          // The first attempt fails; the retry never answers, so the query never reaches its error state.
+          return summaryCalls === 1 ? Response.json({ status: 502 }, { status: 502 }) : new Promise<never>(() => {})
+        }
+        if (url.startsWith('/api/dashboard/timeline')) return Response.json(populated.timeline)
+        if (url.startsWith('/api/dashboard/recent-events')) return Response.json(populated.recent)
+        return new Response(null, { status: 404 })
+      }),
+    )
+    renderApp('/dashboard', new QueryClient({ defaultOptions: { queries: { retry: 3, retryDelay: 0 } } }))
+
+    expect(await screen.findByText("Can't reach the backend - retrying")).toBeInTheDocument()
+    expect(summaryCalls).toBe(2)
+    expect(screen.queryByText("Couldn't load service health.")).not.toBeInTheDocument()
   })
 })

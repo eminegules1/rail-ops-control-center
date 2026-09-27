@@ -1,3 +1,4 @@
+import { QueryClient } from '@tanstack/react-query'
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -160,6 +161,21 @@ describe('events table', () => {
     stubApi({ list: () => problem(400, 'q must be at most 200 characters') })
     renderApp('/events')
     expect(await screen.findByText('q must be at most 200 characters')).toBeInTheDocument()
+  })
+
+  it('leaves a first load that is still retrying to the table, without the backend toast', async () => {
+    let listCalls = 0
+    stubApi({
+      list: () => {
+        listCalls += 1
+        return listCalls === 1 ? Response.json({ status: 502 }, { status: 502 }) : new Promise<never>(() => {})
+      },
+    })
+    renderApp('/events', new QueryClient({ defaultOptions: { queries: { retry: 3, retryDelay: 0 } } }))
+
+    await waitFor(() => expect(listCalls).toBe(2))
+    expect(screen.getByRole('region', { name: 'Events' })).toHaveAttribute('aria-busy', 'true')
+    expect(screen.queryByText("Can't reach the backend - retrying")).not.toBeInTheDocument()
   })
 })
 

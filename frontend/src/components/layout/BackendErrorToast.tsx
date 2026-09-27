@@ -2,8 +2,9 @@ import Alert from '@mui/material/Alert'
 import Snackbar from '@mui/material/Snackbar'
 
 /**
- * The one "backend unreachable" message every page shows. Pages derive `open` from their query state, so
- * repeated polling failures never stack toasts and the message closes once the queries recover.
+ * The one "backend unreachable" message every page shows. Pages derive `open` from their query state, opening it
+ * on the first failed attempt rather than after the retries, so repeated polling failures never stack toasts and
+ * the message closes once the queries recover.
  */
 export function BackendErrorToast({ open }: { open: boolean }) {
   return (

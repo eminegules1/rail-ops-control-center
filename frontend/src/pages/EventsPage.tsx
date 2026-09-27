@@ -68,7 +68,7 @@ export function EventsPage() {
         onError={onStatusChangeFailed}
       />
       <StatusChangeToast feedback={feedback} open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
-      <BackendErrorToast open={events.isError && !failedWithoutData} />
+      <BackendErrorToast open={events.data !== undefined && (events.isError || events.failureCount > 0)} />
     </Box>
   )
 }

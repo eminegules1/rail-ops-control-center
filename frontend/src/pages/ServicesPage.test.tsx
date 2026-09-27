@@ -1,4 +1,5 @@
-import { screen, within } from '@testing-library/react'
+import { QueryClient } from '@tanstack/react-query'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderApp } from '../test/renderApp'
@@ -51,6 +52,11 @@ function stubApi(response: { body: ServiceState[] } | { status: number }) {
 afterEach(() => {
   vi.unstubAllGlobals()
 })
+
+/** Retries at once, as the real app does 3 times, so a test can hold a retry open on a pending response. */
+function retryingClient() {
+  return new QueryClient({ defaultOptions: { queries: { retry: 3, retryDelay: 0 } } })
+}
 
 describe('services page', () => {
   it('shows a skeleton during the first load', async () => {
@@ -116,5 +122,24 @@ describe('services page', () => {
     renderApp('/services')
     expect(await screen.findByText("Couldn't load service status.")).toBeInTheDocument()
     expect(screen.getByText("Can't reach the backend - retrying")).toBeInTheDocument()
+  })
+
+  it('shows the backend toast on the first failed attempt and closes it when the retry succeeds', async () => {
+    let answerRetry: (response: Response) => void = () => {}
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ status: 502 }, { status: 502 }))
+      .mockReturnValueOnce(new Promise<Response>((resolve) => (answerRetry = resolve)))
+    vi.stubGlobal('fetch', fetchMock)
+    renderApp('/services', retryingClient())
+
+    // The retry is still waiting, so the query has not errored yet, but the toast is already up.
+    expect(await screen.findByText("Can't reach the backend - retrying")).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(screen.queryByText("Couldn't load service status.")).not.toBeInTheDocument()
+
+    await act(async () => answerRetry(Response.json(services)))
+    expect(await screen.findByRole('link', { name: 'signal-service' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText("Can't reach the backend - retrying")).not.toBeInTheDocument())
   })
 })
