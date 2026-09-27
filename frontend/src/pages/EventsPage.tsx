@@ -1,12 +1,55 @@
+import Alert from '@mui/material/Alert'
+import Box from '@mui/material/Box'
+import Snackbar from '@mui/material/Snackbar'
 import Typography from '@mui/material/Typography'
+import { useCallback, useMemo } from 'react'
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
+import { useEvents } from '../api/events'
+import { EventDetailDrawer } from '../components/events/EventDetailDrawer'
+import { EventFilters } from '../components/events/EventFilters'
+import { EventTable } from '../components/events/EventTable'
+import { EMPTY_SEARCH, hasFilters, parseEventSearch, toEventSearchParams } from '../lib/eventSearch'
+import type { EventSearch } from '../lib/eventSearch'
 
+/** `/events`, and `/events/:eventId` with that event's detail drawer open over the same table. */
 export function EventsPage() {
+  const { eventId } = useParams()
+  const navigate = useNavigate()
+  const location = useLocation()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const search = useMemo(() => parseEventSearch(searchParams), [searchParams])
+  const setSearch = useCallback(
+    (next: EventSearch, replace = false) => setSearchParams(toEventSearchParams(next), { replace }),
+    [setSearchParams],
+  )
+  const clearFilters = useCallback(() => setSearch(EMPTY_SEARCH), [setSearch])
+
+  const events = useEvents(search)
+  const failedWithoutData = events.isError && !events.data
+
   return (
-    <>
-      <Typography variant="h1" gutterBottom>
-        Events
-      </Typography>
-      <Typography color="text.secondary">The events table arrives in a later feature.</Typography>
-    </>
+    // minmax(0, …) lets the wide table scroll inside its panel instead of widening the page.
+    <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: 'minmax(0, 1fr)' }}>
+      <Typography variant="h1">Events</Typography>
+      <EventFilters search={search} onChange={setSearch} onClear={clearFilters} />
+      <EventTable
+        data={events.data}
+        loading={events.isPending}
+        error={failedWithoutData ? events.error.message : undefined}
+        page={search.page}
+        filtered={hasFilters(search)}
+        onPageChange={(page) => setSearch({ ...search, page })}
+        onClearFilters={clearFilters}
+      />
+      <EventDetailDrawer
+        eventId={eventId}
+        onClose={() => navigate({ pathname: '/events', search: location.search })}
+      />
+      <Snackbar open={events.isError && !failedWithoutData} anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}>
+        <Alert severity="error" variant="filled">
+          Can't reach the backend - retrying
+        </Alert>
+      </Snackbar>
+    </Box>
   )
 }

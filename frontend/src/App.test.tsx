@@ -24,7 +24,7 @@ describe('app shell', () => {
     expect(within(nav).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('aria-current', 'page')
   })
 
-  it('navigates to the events placeholder', async () => {
+  it('navigates to the events page', async () => {
     renderApp('/dashboard')
     await userEvent.click(await screen.findByRole('link', { name: 'Events' }))
     expect(await screen.findByRole('heading', { level: 1, name: 'Events' })).toBeInTheDocument()

@@ -9,10 +9,29 @@ export class ApiError extends Error {
   }
 }
 
+/** Query retry rule: a 4xx answer won't change on retry, so show it at once; retry the rest up to 3 times. */
+export function retryUnlessClientError(failureCount: number, error: Error): boolean {
+  if (error instanceof ApiError && error.status >= 400 && error.status < 500) return false
+  return failureCount < 3
+}
+
 type ProblemDetail = { title?: unknown; detail?: unknown }
 
 export async function fetchJson<T>(url: string): Promise<T> {
-  const response = await fetch(url, { headers: { Accept: 'application/json' } })
+  return request<T>(url, { headers: { Accept: 'application/json' } })
+}
+
+/** Sends `body` as JSON and returns the JSON response, e.g. for a PUT. */
+export async function sendJson<T>(url: string, method: 'POST' | 'PUT', body: unknown): Promise<T> {
+  return request<T>(url, {
+    method,
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+async function request<T>(url: string, init: RequestInit): Promise<T> {
+  const response = await fetch(url, init)
   if (!response.ok) {
     throw new ApiError(response.status, await errorMessage(response))
   }

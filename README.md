@@ -393,7 +393,9 @@ be reloaded or linked directly.
 |---|---|
 | `/` | redirects to `/dashboard` |
 | `/dashboard` | KPI cards, service health, severity and events-over-time charts, recent events |
-| `/events`, `/services` | placeholders until the events and service status pages land |
+| `/events` | server-paginated events table with filters and search in the query string |
+| `/events/:eventId` | the events page with that event's detail drawer open |
+| `/services` | placeholder until the service status page lands |
 
 The dashboard polls the dashboard APIs every 5 seconds (the summary cache
 lifetime); polling pauses while the browser tab is hidden. If the backend is
@@ -401,6 +403,20 @@ unreachable, each section keeps its last data or shows its error state, and a
 single "Can't reach the backend - retrying" message stays open until the API
 answers again. The top bar has a Light / Dark / System theme switch; the
 choice is remembered in the browser.
+
+The events page keeps its state in the URL, so any view can be reloaded,
+bookmarked or shared: severity, status, source and service filters, the search
+text `q` (matched case-insensitively against message, service and event ID,
+applied 300 ms after typing stops) and a 1-based `page`, for example
+`/events?severity=CRITICAL&status=OPEN&q=signal&page=2`. Changing a filter goes
+back to page 1. Clicking a row or its event ID opens the detail drawer at
+`/events/<eventId>` with the same query string; closing it returns to the
+filtered table, and an unknown ID shows "Event not found". The drawer offers
+only the status changes the lifecycle allows (Acknowledge, Resolve, Reopen).
+The new status shows at once; if the backend rejects the change (for example a
+409 for an invalid transition or an overlapping update) it rolls back and the
+reason appears in an error message. The table and drawer poll every 5 seconds
+like the dashboard, pausing while a status change is in flight.
 
 For development, run the Vite dev server against the backend on the host
 (`BACKEND_PORT`, default 8080):

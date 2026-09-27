@@ -12,11 +12,13 @@ type Props = {
   /** Load failed and there is no earlier data to keep showing. */
   failed: boolean
   skeletonHeight: number
+  /** Replaces the default "Couldn't load …" message, e.g. with the API's error detail. */
+  errorText?: string
   children?: ReactNode
 }
 
 /** A titled dashboard section with its loading and error states. */
-export function Panel({ title, loading, failed, skeletonHeight, children }: Props) {
+export function Panel({ title, loading, failed, skeletonHeight, errorText, children }: Props) {
   const titleId = useId()
 
   return (
@@ -28,7 +30,7 @@ export function Panel({ title, loading, failed, skeletonHeight, children }: Prop
         <Skeleton variant="rounded" height={skeletonHeight} />
       ) : failed ? (
         <Alert severity="error" variant="outlined">
-          Couldn't load {title.toLowerCase()}.
+          {errorText ?? `Couldn't load ${title.toLowerCase()}.`}
         </Alert>
       ) : (
         children

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, fetchJson } from './client'
+import { ApiError, fetchJson, retryUnlessClientError, sendJson } from './client'
 
 function stubFetch(response: Response) {
   const fetchMock = vi.fn().mockResolvedValue(response)
@@ -47,5 +47,48 @@ describe('fetchJson', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
 
     await expect(fetchJson('/api/dashboard/summary')).rejects.toThrow('Failed to fetch')
+  })
+})
+
+describe('sendJson', () => {
+  it('sends the body as JSON and returns the parsed response', async () => {
+    const fetchMock = stubFetch(Response.json({ eventId: 'EVT-1', status: 'ACKNOWLEDGED' }))
+
+    await expect(sendJson('/api/events/EVT-1/status', 'PUT', { status: 'ACKNOWLEDGED' })).resolves.toEqual({
+      eventId: 'EVT-1',
+      status: 'ACKNOWLEDGED',
+    })
+    expect(fetchMock).toHaveBeenCalledWith('/api/events/EVT-1/status', {
+      method: 'PUT',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: '{"status":"ACKNOWLEDGED"}',
+    })
+  })
+
+  it('throws an ApiError with the ProblemDetail detail', async () => {
+    stubFetch(
+      Response.json(
+        { title: 'Invalid status transition', status: 409, detail: 'Cannot change status from ACKNOWLEDGED to OPEN' },
+        { status: 409 },
+      ),
+    )
+
+    await expect(sendJson('/api/events/EVT-1/status', 'PUT', { status: 'OPEN' })).rejects.toMatchObject({
+      status: 409,
+      message: 'Cannot change status from ACKNOWLEDGED to OPEN',
+    })
+  })
+})
+
+describe('retryUnlessClientError', () => {
+  it('never retries a 4xx answer', () => {
+    expect(retryUnlessClientError(0, new ApiError(404, 'not found'))).toBe(false)
+    expect(retryUnlessClientError(0, new ApiError(400, 'bad request'))).toBe(false)
+  })
+
+  it('retries server and network errors up to 3 times', () => {
+    expect(retryUnlessClientError(0, new ApiError(503, 'unavailable'))).toBe(true)
+    expect(retryUnlessClientError(2, new TypeError('Failed to fetch'))).toBe(true)
+    expect(retryUnlessClientError(3, new ApiError(500, 'error'))).toBe(false)
   })
 })

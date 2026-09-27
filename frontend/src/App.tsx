@@ -12,6 +12,7 @@ export function AppRoutes() {
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="events" element={<EventsPage />} />
+        <Route path="events/:eventId" element={<EventsPage />} />
         <Route path="services" element={<ServicesPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
