@@ -18,6 +18,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
+import org.springframework.kafka.core.KafkaOperations;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.core.ProducerFactory;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
@@ -43,10 +44,14 @@ class KafkaConsumerConfig implements DisposableBean {
 
     @Bean
     DefaultErrorHandler kafkaErrorHandler(IngestionProperties properties, ProducerFactory<?, ?> producerFactory) {
-        String deadLetterTopic = properties.deadLetter().name();
         deadLetterProducerFactory = deadLetterProducerFactory(producerFactory);
-        DeadLetterPublishingRecoverer publisher = new DeadLetterPublishingRecoverer(
-                new KafkaTemplate<>(deadLetterProducerFactory),
+        return errorHandler(properties, new KafkaTemplate<>(deadLetterProducerFactory));
+    }
+
+    /** The handler with the dead-letter sender passed in, so tests can make the send fail. */
+    static DefaultErrorHandler errorHandler(IngestionProperties properties, KafkaOperations<?, ?> deadLetterTemplate) {
+        String deadLetterTopic = properties.deadLetter().name();
+        DeadLetterPublishingRecoverer publisher = new DeadLetterPublishingRecoverer(deadLetterTemplate,
                 (record, exception) -> new TopicPartition(deadLetterTopic, record.partition()));
         DefaultErrorHandler handler = new DefaultErrorHandler((record, exception) -> {
             // Throws if Kafka does not confirm the send; the record is then attempted again, never skipped.
