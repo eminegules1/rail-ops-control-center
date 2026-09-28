@@ -425,6 +425,37 @@ parameter.
 Known limitation until Redis resilience (feature 14): if Redis is unavailable,
 these endpoints return 500 instead of falling back to PostgreSQL.
 
+## Real-time push
+
+The backend pushes changes over STOMP on a native WebSocket at `/ws`
+(`ws://localhost:8080/ws`, or `/ws` through the frontend on port 3000 and the
+Vite dev server, which both proxy it). Clients only subscribe; a `SEND` frame
+gets an `ERROR` frame and the connection is closed. Browsers must connect from
+the same origin as the page. The broker sends heart-beats every 10 seconds.
+
+| Topic | When | Body |
+|---|---|---|
+| `/topic/events` | an event is ingested for the first time, or its status changes | `{"type":"CREATED"\|"UPDATED","event":{...}}` |
+| `/topic/summary` | at most once a second, only after a change | the `GET /api/dashboard/summary` body |
+
+`event` has the shape of `GET /api/events/{eventId}`. A duplicate or invalid
+event, and a status request that changes nothing or fails, push nothing. The
+pushed summary is built from the live counters rather than the 5-second cache,
+so it includes new events straight away.
+
+Delivery is best effort: nothing is replayed after a reconnect, there is no
+message on subscribe, and events from different Kafka partitions can arrive
+in any order. Clients load state over the REST API and use pushes to stay
+current. A failed push is logged and never fails ingestion or a status update.
+
+To see the handshake through nginx with the stack running:
+
+```bash
+curl -i -N -H "Connection: Upgrade" -H "Upgrade: websocket"   -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ=="   -H "Origin: http://localhost:3000" http://localhost:3000/ws
+```
+
+It answers `101 Switching Protocols`; with another `Origin` it answers `403`.
+
 ## Frontend
 
 The dashboard is a React + TypeScript + Vite app (React Router, TanStack

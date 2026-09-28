@@ -8,6 +8,8 @@ export default defineConfig({
     // The browser calls relative /api URLs; in dev they go to the backend on the host.
     proxy: {
       '/api': `http://localhost:${process.env.BACKEND_PORT ?? 8080}`,
+      // STOMP over WebSocket (real-time push).
+      '/ws': { target: `ws://localhost:${process.env.BACKEND_PORT ?? 8080}`, ws: true },
     },
   },
   test: {

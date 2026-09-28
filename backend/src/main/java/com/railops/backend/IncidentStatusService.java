@@ -16,17 +16,20 @@ public class IncidentStatusService {
     private final IncidentEventRepository repository;
     private final TransactionTemplate transaction;
     private final LiveStateUpdater liveState;
+    private final LiveUpdatePublisher liveUpdates;
 
     public IncidentStatusService(IncidentEventRepository repository, TransactionTemplate transaction,
-                                 LiveStateUpdater liveState) {
+                                 LiveStateUpdater liveState, LiveUpdatePublisher liveUpdates) {
         this.repository = repository;
         this.transaction = transaction;
         this.liveState = liveState;
+        this.liveUpdates = liveUpdates;
     }
 
     /**
      * Changes the event's status when the lifecycle allows it; the same status returns the event unchanged.
-     * A Redis failure after the commit is logged, not thrown: Postgres already holds the change.
+     * A Redis failure after the commit is logged, not thrown: Postgres already holds the change. A real change is
+     * pushed to live clients.
      *
      * @throws EventNotFoundException when no event has this id
      * @throws InvalidStatusTransitionException when the lifecycle does not allow the change
@@ -60,6 +63,8 @@ public class IncidentStatusService {
                 // Feature 14 sets the reconcile-needed flag here.
                 log.warn("Live state not updated for status change of event {}", event.eventId(), e);
             }
+            // Pushed even when Redis failed: Postgres holds the change.
+            liveUpdates.eventUpdated(event);
         }
         return event;
     }

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
@@ -50,6 +51,9 @@ class IncidentStatusServiceIntegrationTest {
     @MockitoBean
     private LiveStateUpdater liveState;
 
+    @MockitoBean
+    private LiveUpdatePublisher liveUpdates;
+
     @BeforeEach
     void reset() {
         repository.deleteAll();
@@ -72,6 +76,7 @@ class IncidentStatusServiceIntegrationTest {
         assertThat(after.getVersion()).isEqualTo(before.getVersion() + 1);
         assertThat(after.getUpdatedAt()).isBetween(calledAt.truncatedTo(ChronoUnit.MICROS), returnedAt);
         verify(liveState).applyStatusChange("signal-service", Severity.CRITICAL, from, to);
+        verify(liveUpdates).eventUpdated(response);
         assertThat(response.updatedAt()).isEqualTo(after.getUpdatedAt().truncatedTo(ChronoUnit.MILLIS));
     }
 
@@ -87,6 +92,7 @@ class IncidentStatusServiceIntegrationTest {
         assertThat(after.getVersion()).isEqualTo(before.getVersion());
         assertThat(after.getUpdatedAt()).isEqualTo(before.getUpdatedAt());
         verify(liveState, never()).applyStatusChange(any(), any(), any(), any());
+        verifyNoInteractions(liveUpdates);
     }
 
     @Test
@@ -99,6 +105,7 @@ class IncidentStatusServiceIntegrationTest {
 
         assertThat(response.status()).isEqualTo(EventStatus.RESOLVED);
         assertThat(stored().getStatus()).isEqualTo(EventStatus.RESOLVED);
+        verify(liveUpdates).eventUpdated(response);
     }
 
     @Test
@@ -116,12 +123,14 @@ class IncidentStatusServiceIntegrationTest {
         assertThat(after.getStatus()).isEqualTo(EventStatus.RESOLVED);
         assertThat(after.getVersion()).isEqualTo(before.getVersion());
         verify(liveState, never()).applyStatusChange(any(), any(), any(), any());
+        verifyNoInteractions(liveUpdates);
     }
 
     @Test
     void unknownEventIsNotFound() {
         assertThatThrownBy(() -> service.changeStatus("EVT-404", EventStatus.RESOLVED))
                 .isInstanceOf(EventNotFoundException.class);
+        verifyNoInteractions(liveUpdates);
     }
 
     @Test

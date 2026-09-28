@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -22,13 +23,14 @@ class EventIngestionServiceTest {
 
     private final IncidentEventRepository repository = mock(IncidentEventRepository.class);
     private final LiveStateUpdater liveState = mock(LiveStateUpdater.class);
+    private final LiveUpdatePublisher liveUpdates = mock(LiveUpdatePublisher.class);
     private ValidatorFactory factory;
     private EventIngestionService service;
 
     @BeforeEach
     void setUp() {
         factory = Validation.buildDefaultValidatorFactory();
-        service = new EventIngestionService(repository, factory.getValidator(), liveState);
+        service = new EventIngestionService(repository, factory.getValidator(), liveState, liveUpdates);
     }
 
     @AfterEach
@@ -39,8 +41,10 @@ class EventIngestionServiceTest {
     @Test
     void storesValidEvent() {
         IncidentEventMessage event = IncidentEventMessageValidationTest.valid();
+        IncidentEvent stored = storedRow(event.eventId(), event.timestamp());
         when(repository.insertIfAbsent(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(),
                 any(Instant.class))).thenReturn(1);
+        when(repository.findByEventId(event.eventId())).thenReturn(Optional.of(stored));
 
         assertThat(service.ingest(event)).isEqualTo(IngestionResult.STORED);
         verify(repository).insertIfAbsent(event.eventId(), "CBTC", "signal-service", "CRITICAL",
@@ -72,12 +76,15 @@ class EventIngestionServiceTest {
     @Test
     void propagatesRedisFailureSoTheRecordIsRetried() {
         IncidentEventMessage event = IncidentEventMessageValidationTest.valid();
+        IncidentEvent stored = storedRow(event.eventId(), event.timestamp());
         when(repository.insertIfAbsent(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(),
                 any(Instant.class))).thenReturn(1);
+        when(repository.findByEventId(event.eventId())).thenReturn(Optional.of(stored));
         when(liveState.applyEvent(any(), any(), any(), any(), any()))
                 .thenThrow(new RedisConnectionFailureException("down"));
 
         assertThatThrownBy(() -> service.ingest(event)).isInstanceOf(RedisConnectionFailureException.class);
+        verifyNoInteractions(liveUpdates);
     }
 
     @Test
@@ -89,6 +96,62 @@ class EventIngestionServiceTest {
                 .isInstanceOf(InvalidEventException.class)
                 .hasMessage("invalid fields: eventId, source")
                 .hasMessageNotContaining("XYZ");
-        verifyNoInteractions(repository, liveState);
+        verifyNoInteractions(repository, liveState, liveUpdates);
+    }
+
+    @Test
+    void pushesNewEventOnceItReachesTheLiveState() {
+        IncidentEventMessage event = IncidentEventMessageValidationTest.valid();
+        IncidentEvent stored = storedRow(event.eventId(), event.timestamp());
+        when(repository.insertIfAbsent(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(),
+                any(Instant.class))).thenReturn(1);
+        when(liveState.applyEvent(any(), any(), any(), any(), any())).thenReturn(true);
+        when(repository.findByEventId(event.eventId())).thenReturn(Optional.of(stored));
+
+        service.ingest(event);
+
+        verify(liveUpdates).eventCreated(EventResponse.from(stored));
+    }
+
+    @Test
+    void doesNotPushDuplicateAlreadyInTheLiveState() {
+        IncidentEventMessage event = IncidentEventMessageValidationTest.valid();
+        IncidentEvent stored = storedRow(event.eventId(), event.timestamp());
+        when(repository.insertIfAbsent(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(),
+                any(Instant.class))).thenReturn(0);
+        when(repository.findByEventId(event.eventId())).thenReturn(Optional.of(stored));
+        when(liveState.applyEvent(any(), any(), any(), any(), any())).thenReturn(false);
+
+        assertThat(service.ingest(event)).isEqualTo(IngestionResult.DUPLICATE);
+        verify(liveUpdates, never()).eventCreated(any());
+    }
+
+    // The first delivery stored the row and then failed on Redis: this redelivery is the one that goes live.
+    @Test
+    void pushesDuplicateWhoseFirstDeliveryMissedTheLiveState() {
+        IncidentEventMessage event = IncidentEventMessageValidationTest.valid();
+        IncidentEvent stored = storedRow(event.eventId(), event.timestamp());
+        when(repository.insertIfAbsent(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(),
+                any(Instant.class))).thenReturn(0);
+        when(repository.findByEventId(event.eventId())).thenReturn(Optional.of(stored));
+        when(liveState.applyEvent(any(), any(), any(), any(), any())).thenReturn(true);
+
+        assertThat(service.ingest(event)).isEqualTo(IngestionResult.DUPLICATE);
+        verify(liveUpdates).eventCreated(EventResponse.from(stored));
+    }
+
+    // The row as the valid message stores it.
+    private static IncidentEvent storedRow(String eventId, Instant timestamp) {
+        IncidentEvent stored = mock(IncidentEvent.class);
+        when(stored.getEventId()).thenReturn(eventId);
+        when(stored.getSource()).thenReturn("CBTC");
+        when(stored.getService()).thenReturn("signal-service");
+        when(stored.getSeverity()).thenReturn(Severity.CRITICAL);
+        when(stored.getMessage()).thenReturn("Signal failure");
+        when(stored.getStatus()).thenReturn(EventStatus.OPEN);
+        when(stored.getTimestamp()).thenReturn(timestamp);
+        when(stored.getReceivedAt()).thenReturn(Instant.parse("2026-09-26T10:00:01Z"));
+        when(stored.getUpdatedAt()).thenReturn(Instant.parse("2026-09-26T10:00:01Z"));
+        return stored;
     }
 }
