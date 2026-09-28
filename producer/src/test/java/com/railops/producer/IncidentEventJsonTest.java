@@ -62,7 +62,7 @@ class IncidentEventJsonTest {
 
     private List<String> sample() throws Exception {
         Clock clock = Clock.fixed(Instant.parse("2026-09-26T14:30:05Z"), ZoneOffset.UTC);
-        EventGenerator generator = new EventGenerator(new Random(7), clock, 0);
+        EventGenerator generator = new EventGenerator(new Random(7), clock, 0, 0);
         List<String> json = new ArrayList<>();
         for (int i = 0; i < 200; i++) {
             IncidentEvent generated = generator.next().event();

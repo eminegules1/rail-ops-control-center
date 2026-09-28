@@ -14,7 +14,7 @@ Every app feature adds its own Dockerfile and compose service and updates the RE
 - [x] 8. **Dashboard page** - app shell and routes, KPI cards, service health grid, severity and events-over-time charts, recent events list, polling refresh, with the frontend test setup (Vitest, RTL) and the nginx frontend compose service
 - [x] 9. **Events page** - paginated table with URL-synced filters and search, deep-linkable detail drawer, optimistic status change
 - [x] 10. **Service status page** - per-service health, last event time, latest severity, open and active incident counts
-- [ ] 11. **Retry and dead-letter handling** - exponential-backoff retries, non-retryable validation errors, DLT publishing, invalid-message demo ratio
+- [x] 11. **Retry and dead-letter handling** - exponential-backoff retries, non-retryable validation errors, DLT publishing, invalid-message demo ratio
 - [ ] 12. **Real-time push** - STOMP WebSocket broadcasting new/updated events and throttled summary updates
 - [ ] 13. **Live UI updates** - WebSocket cache patching, connection status chip, reconnect handling, polling as fallback only, brief highlight on rows that were just created or updated (own or other operators’ status changes)
 - [ ] 14. **Redis resilience** - Redis circuit breaker, Postgres fallback for dashboard reads, reconcile-needed flag and pause-and-rebuild reconciler

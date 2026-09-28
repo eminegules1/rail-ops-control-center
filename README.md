@@ -76,7 +76,8 @@ It sends events in three ways:
   hour, so the dashboard is never empty. Every restart seeds again.
 - **Auto mode:** one event every `PRODUCER_INTERVAL_MS`.
 - **Manual burst:** `curl -X POST "http://localhost:8082/produce?count=50"`
-  returns `{"sent":50,"duplicates":2}` once Kafka confirms every event.
+  returns `{"sent":50,"duplicates":2,"invalid":1}` once Kafka confirms every
+  event.
   `count` is 1-1000 (default 1). An invalid value returns a 400 problem
   response, and a Kafka outage returns 503.
 
@@ -85,10 +86,17 @@ Severity and status are weighted towards realistic values (mostly `INFO` and
 unchanged, with the same `eventId` and payload, to exercise idempotent
 processing downstream.
 
+Another share (`PRODUCER_INVALID_RATIO`) is broken on purpose, to show the
+backend's [dead-letter handling](#retries-and-the-dead-letter-topic). Each one
+is truncated JSON, an unknown `severity`, a blank `service`, or a missing
+`eventId`. Invalid messages count towards `sent` and are never re-sent as
+duplicates.
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `PRODUCER_INTERVAL_MS` | `2000` | Delay between auto-mode events (min 100) |
 | `PRODUCER_DUPLICATE_RATIO` | `0.05` | Share of sends that re-send a recent event (0-1) |
+| `PRODUCER_INVALID_RATIO` | `0.02` | Share of sends that are intentionally invalid (0-1) |
 | `PRODUCER_PORT` | `8082` | Host port for `/produce` and `/actuator/health` |
 
 To watch the events, open Kafka UI (http://localhost:8081) and go to
@@ -136,12 +144,36 @@ A message is **invalid** when any of these apply:
 - `source` is not exactly one of `ATS`, `CBTC`, `SCADA`, `TMS`, `PIS`
 - PostgreSQL rejects the data anyway
 
-Invalid messages are logged with their partition and offset and skipped, and
-their offset is committed. For now they are only logged; a later feature sends
-them to a dead-letter topic. Any other failure, such as PostgreSQL being down,
-is retried every 2 seconds until it succeeds, so valid events are never
-dropped. The same applies while Redis is down: the event is already stored in
-PostgreSQL, and the Redis step is retried until Redis is back.
+### Retries and the dead-letter topic
+
+The backend declares `incident-events.DLT` (3 partitions, 7-day retention).
+Failed records end up there instead of being dropped or blocking their
+partition:
+
+- **Invalid messages** go to the DLT straight away, without retrying.
+- **Any other failure**, such as PostgreSQL or Redis being down, is retried
+  with exponential back-off: 1s, 2s, 4s, 8s, 16s, then 30s. After 8 retries
+  (about 2 minutes) the record goes to the DLT, and the partition moves on.
+
+Each dead-lettered record keeps its key and partition. A message that was not
+readable JSON keeps its original bytes; any other message is written as event
+JSON. Spring's `kafka_dlt-*` headers record the original topic, partition,
+offset and the exception. The offset is committed only once Kafka confirms the
+DLT write. If that write fails, the record is attempted again.
+
+Every failed attempt is logged with a short reason, never with payload values,
+and so is every record sent to the DLT (`Sent event at <topic-partition@offset>
+to incident-events.DLT: <reason>`).
+
+Known limitations:
+
+- A valid event that is dead-lettered after an outage longer than the retry
+  window is not in the dashboard. It is kept in the DLT, and because ingestion
+  is idempotent it can be republished to `incident-events` safely. There is no
+  replay tool yet.
+- Until Redis resilience (feature 14), a Redis outage longer than the retry
+  window can leave an event stored in PostgreSQL but sent to the DLT, so the
+  Redis counters miss it until they are rebuilt.
 
 Inspect stored events:
 
@@ -149,13 +181,17 @@ Inspect stored events:
 docker compose exec postgres psql -U rail_ops -d incidents   -c "select event_id, source, service, severity, status, timestamp from events order by timestamp desc limit 10;"
 ```
 
-Publish an invalid message by hand and watch the backend skip it (in Git Bash,
-prefix the command with `MSYS_NO_PATHCONV=1`):
+Publish an invalid message by hand and watch it reach the DLT (in Git Bash,
+prefix each command with `MSYS_NO_PATHCONV=1`):
 
 ```bash
 echo '{not json' | docker compose exec -T kafka /opt/kafka/bin/kafka-console-producer.sh   --bootstrap-server kafka:29092 --topic incident-events
-docker compose logs backend | grep "Skipping invalid"
+docker compose logs backend | grep "incident-events.DLT"
+docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh   --bootstrap-server kafka:29092 --topic incident-events.DLT --from-beginning   --property print.headers=true --timeout-ms 5000
 ```
+
+Or open Kafka UI (http://localhost:8081) and go to
+**Topics > incident-events.DLT > Messages**.
 
 | Variable | Default | Meaning |
 |---|---|---|

@@ -3,6 +3,7 @@ package com.railops.producer;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
 
+import com.railops.producer.EventGenerator.Defect;
 import com.railops.producer.EventGenerator.Generated;
 import com.railops.producer.ServiceCatalog.RailService;
 import java.time.Clock;
@@ -10,6 +11,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -26,7 +28,11 @@ class EventGeneratorTest {
     private static final int DRAWS = 20_000;
 
     private static EventGenerator generator(double duplicateRatio) {
-        return new EventGenerator(new Random(42), CLOCK, duplicateRatio);
+        return generator(duplicateRatio, 0);
+    }
+
+    private static EventGenerator generator(double duplicateRatio, double invalidRatio) {
+        return new EventGenerator(new Random(42), CLOCK, duplicateRatio, invalidRatio);
     }
 
     @Test
@@ -132,6 +138,40 @@ class EventGeneratorTest {
             }
         }
         assertShare((int) duplicates, 0.25);
+    }
+
+    @Test
+    void ratioZeroNeverSendsInvalid() {
+        EventGenerator generator = generator(0.5, 0);
+        for (int i = 0; i < 1_000; i++) {
+            assertThat(generator.next().invalid()).isFalse();
+        }
+    }
+
+    @Test
+    void ratioOneSendsOnlyInvalidFreshEventsWithEveryDefect() {
+        EventGenerator generator = generator(1, 1);
+        Set<Defect> defects = EnumSet.noneOf(Defect.class);
+        for (int i = 0; i < 1_000; i++) {
+            Generated next = generator.next();
+            assertThat(next.invalid()).isTrue();
+            assertThat(next.duplicate()).isFalse();
+            defects.add(next.defect());
+        }
+        assertThat(defects).containsExactlyInAnyOrder(Defect.values());
+        assertThat(generator.bufferedCount()).as("invalid events are never re-sent as duplicates").isZero();
+    }
+
+    @Test
+    void invalidRatioIsRoughlyHonoured() {
+        EventGenerator generator = generator(0, 0.25);
+        long invalid = 0;
+        for (int i = 0; i < DRAWS; i++) {
+            if (generator.next().invalid()) {
+                invalid++;
+            }
+        }
+        assertShare((int) invalid, 0.25);
     }
 
     @Test

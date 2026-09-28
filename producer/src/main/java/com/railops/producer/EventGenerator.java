@@ -29,23 +29,37 @@ public class EventGenerator {
     private static final EventStatus[] STATUSES = EventStatus.values();
     private static final int[] STATUS_WEIGHTS = {70, 20, 10};
 
-    public record Generated(IncidentEvent event, boolean duplicate) {
+    /** How an intentionally invalid message is broken; each one fails a different backend check. */
+    public enum Defect {
+        NOT_JSON, UNKNOWN_SEVERITY, BLANK_SERVICE, MISSING_EVENT_ID
+    }
+
+    private static final Defect[] DEFECTS = Defect.values();
+
+    /** A generated message; {@code defect} is null for a valid event and says how to break it otherwise. */
+    public record Generated(IncidentEvent event, boolean duplicate, Defect defect) {
+
+        public boolean invalid() {
+            return defect != null;
+        }
     }
 
     private final RandomGenerator random;
     private final Clock clock;
     private final double duplicateRatio;
+    private final double invalidRatio;
     private final Deque<IncidentEvent> recent = new ArrayDeque<>(BUFFER_SIZE);
 
     @Autowired
     public EventGenerator(RandomGenerator random, Clock clock, ProducerProperties properties) {
-        this(random, clock, properties.duplicateRatio());
+        this(random, clock, properties.duplicateRatio(), properties.invalidRatio());
     }
 
-    EventGenerator(RandomGenerator random, Clock clock, double duplicateRatio) {
+    EventGenerator(RandomGenerator random, Clock clock, double duplicateRatio, double invalidRatio) {
         this.random = random;
         this.clock = clock;
         this.duplicateRatio = duplicateRatio;
+        this.invalidRatio = invalidRatio;
     }
 
     public synchronized Generated next() {
@@ -68,12 +82,17 @@ public class EventGenerator {
     }
 
     private Generated next(Instant timestamp) {
+        // Guarded so a zero ratio leaves the random sequence unchanged.
+        if (invalidRatio > 0 && random.nextDouble() < invalidRatio) {
+            // Not buffered, so a duplicate is always a valid event.
+            return new Generated(fresh(timestamp), false, DEFECTS[random.nextInt(DEFECTS.length)]);
+        }
         if (!recent.isEmpty() && random.nextDouble() < duplicateRatio) {
-            return new Generated(pickRecent(), true);
+            return new Generated(pickRecent(), true, null);
         }
         IncidentEvent event = fresh(timestamp);
         remember(event);
-        return new Generated(event, false);
+        return new Generated(event, false, null);
     }
 
     private IncidentEvent fresh(Instant timestamp) {

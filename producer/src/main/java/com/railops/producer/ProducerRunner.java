@@ -28,8 +28,8 @@ class ProducerRunner {
         }
         try {
             ProduceResult result = publisher.seed(properties.seedCount());
-            log.info("Seed burst sent {} events ({} duplicates) to {}",
-                    result.sent(), result.duplicates(), properties.topic().name());
+            log.info("Seed burst sent {} events ({} duplicates, {} invalid) to {}",
+                    result.sent(), result.duplicates(), result.invalid(), properties.topic().name());
         } catch (PublishException e) {
             log.warn("Seed burst failed: {}", e.getMessage());
         }

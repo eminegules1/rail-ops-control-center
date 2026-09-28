@@ -22,6 +22,8 @@ spring:
 producer:
   interval-ms: ${PRODUCER_INTERVAL_MS:2000}
   duplicate-ratio: ${PRODUCER_DUPLICATE_RATIO:0.05}
+  # Share of intentionally broken messages, to demo the backend's dead-letter topic.
+  invalid-ratio: ${PRODUCER_INVALID_RATIO:0.02}
   seed-count: ${PRODUCER_SEED_COUNT:200}
   topic:
     name: incident-events

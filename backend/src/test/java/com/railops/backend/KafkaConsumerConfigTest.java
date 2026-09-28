@@ -5,13 +5,17 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.kafka.listener.ListenerExecutionFailedException;
 import org.springframework.kafka.support.serializer.DeserializationException;
+import org.springframework.util.backoff.BackOffExecution;
 
 class KafkaConsumerConfigTest {
 
@@ -93,6 +97,19 @@ class KafkaConsumerConfigTest {
         String reason = KafkaConsumerConfig.reason(new InvalidEventException("x".repeat(500)));
 
         assertThat(reason).hasSize(KafkaConsumerConfig.MAX_REASON_LENGTH + 3).endsWith("...");
+    }
+
+    @Test
+    void backOffGrowsExponentiallyUpToTheCapThenStops() {
+        BackOffExecution execution = KafkaConsumerConfig.backOff(new IngestionProperties.Retry(
+                Duration.ofSeconds(1), 2.0, Duration.ofSeconds(30), 8)).start();
+
+        List<Long> intervals = new ArrayList<>();
+        for (long next = execution.nextBackOff(); next != BackOffExecution.STOP; next = execution.nextBackOff()) {
+            intervals.add(next);
+        }
+
+        assertThat(intervals).containsExactly(1000L, 2000L, 4000L, 8000L, 16000L, 30000L, 30000L, 30000L);
     }
 
     private String reasonFor(String json) {

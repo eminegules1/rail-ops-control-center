@@ -2,49 +2,101 @@ package com.railops.backend;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import java.sql.SQLException;
+import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.serialization.ByteArraySerializer;
+import org.apache.kafka.common.serialization.StringSerializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.kafka.core.DefaultKafkaProducerFactory;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.core.ProducerFactory;
+import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
-import org.springframework.util.backoff.FixedBackOff;
+import org.springframework.kafka.support.ExponentialBackOffWithMaxRetries;
+import org.springframework.kafka.support.JacksonUtils;
+import org.springframework.kafka.support.serializer.DelegatingByTypeSerializer;
+import org.springframework.kafka.support.serializer.JsonSerializer;
 
 /**
- * Invalid records are logged and skipped; everything else (for example Postgres being down) is retried until it
- * succeeds, so a valid event is never dropped. Boot applies this handler to the listener container factory.
+ * Invalid records go straight to the dead-letter topic. Everything else (for example PostgreSQL being down) is
+ * retried with exponential back-off and goes to the dead-letter topic once the retries run out, so a record is
+ * never silently dropped. Boot applies this handler to the listener container factory.
  */
 @Configuration
-class KafkaConsumerConfig {
+class KafkaConsumerConfig implements DisposableBean {
 
     private static final Logger log = LoggerFactory.getLogger(KafkaConsumerConfig.class);
 
-    private static final long RETRY_INTERVAL_MS = 2000;
     static final int MAX_REASON_LENGTH = 200;
 
+    private DefaultKafkaProducerFactory<String, Object> deadLetterProducerFactory;
+
     @Bean
-    DefaultErrorHandler kafkaErrorHandler() {
-        DefaultErrorHandler handler = new DefaultErrorHandler(KafkaConsumerConfig::skip,
-                new FixedBackOff(RETRY_INTERVAL_MS, FixedBackOff.UNLIMITED_ATTEMPTS));
+    DefaultErrorHandler kafkaErrorHandler(IngestionProperties properties, ProducerFactory<?, ?> producerFactory) {
+        String deadLetterTopic = properties.deadLetter().name();
+        deadLetterProducerFactory = deadLetterProducerFactory(producerFactory);
+        DeadLetterPublishingRecoverer publisher = new DeadLetterPublishingRecoverer(
+                new KafkaTemplate<>(deadLetterProducerFactory),
+                (record, exception) -> new TopicPartition(deadLetterTopic, record.partition()));
+        DefaultErrorHandler handler = new DefaultErrorHandler((record, exception) -> {
+            // Throws if Kafka does not confirm the send; the record is then attempted again, never skipped.
+            publisher.accept(record, exception);
+            log.warn("Sent event at {}-{}@{} to {}: {}", record.topic(), record.partition(), record.offset(),
+                    deadLetterTopic, reason(exception));
+        }, backOff(properties.retry()));
         // DeserializationException is already non-retryable by default.
         handler.addNotRetryableExceptions(InvalidEventException.class, DataIntegrityViolationException.class);
-        // Commit the skipped record's offset even when no later record on the partition would (MANUAL_IMMEDIATE).
+        // Commit the recovered record's offset even when no later record on the partition would (MANUAL_IMMEDIATE).
         handler.setCommitRecovered(true);
         // Every failed attempt is logged with a short reason, so outages stay visible without logging row data.
-        // Invalid records fail once and are then skipped.
+        // Invalid records fail once and then go to the dead-letter topic.
         handler.setRetryListeners((record, exception, attempt) -> log.warn(
                 "Failed to process event at {}-{}@{} (attempt {}): {}", record.topic(), record.partition(), record.offset(),
                 attempt, reason(exception)));
         return handler;
     }
 
-    private static void skip(ConsumerRecord<?, ?> record, Exception exception) {
-        log.warn("Skipping invalid event at {}-{}@{}: {}", record.topic(), record.partition(), record.offset(),
-                reason(exception));
+    static ExponentialBackOffWithMaxRetries backOff(IngestionProperties.Retry retry) {
+        ExponentialBackOffWithMaxRetries backOff = new ExponentialBackOffWithMaxRetries(retry.maxRetries());
+        backOff.setInitialInterval(retry.initialInterval().toMillis());
+        backOff.setMultiplier(retry.multiplier());
+        backOff.setMaxInterval(retry.maxInterval().toMillis());
+        return backOff;
+    }
+
+    /** Closes the dead-letter producer with the context, since it is not a bean Spring would destroy itself. */
+    @Override
+    public void destroy() {
+        if (deadLetterProducerFactory != null) {
+            deadLetterProducerFactory.destroy();
+        }
+    }
+
+    /**
+     * A record that could not be deserialized is published as its original bytes; one that was read but then
+     * failed is published as event JSON. Not a bean: a KafkaTemplate or ProducerFactory bean would replace Boot's.
+     */
+    private static DefaultKafkaProducerFactory<String, Object> deadLetterProducerFactory(
+            ProducerFactory<?, ?> producerFactory) {
+        // Same wire format as the producer: ISO-8601 timestamp, no type headers.
+        JsonSerializer<Object> json = new JsonSerializer<>(JacksonUtils.enhancedObjectMapper()
+                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS));
+        json.setAddTypeInfo(false);
+        DelegatingByTypeSerializer values = new DelegatingByTypeSerializer(Map.of(
+                byte[].class, new ByteArraySerializer(),
+                IncidentEventMessage.class, json));
+        return new DefaultKafkaProducerFactory<>(producerFactory.getConfigurationProperties(), new StringSerializer(),
+                values);
     }
 
     /** A short reason that never echoes payload values. */

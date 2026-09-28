@@ -29,21 +29,22 @@ class ProduceControllerTest {
 
     @Test
     void countDefaultsToOne() throws Exception {
-        when(publisher.produce(1)).thenReturn(new ProduceResult(1, 0));
+        when(publisher.produce(1)).thenReturn(new ProduceResult(1, 0, 0));
 
         mvc.perform(post("/produce"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.sent").value(1))
-                .andExpect(jsonPath("$.duplicates").value(0));
+                .andExpect(jsonPath("$.duplicates").value(0))
+                .andExpect(jsonPath("$.invalid").value(0));
     }
 
     @Test
-    void returnsSentAndDuplicateCounts() throws Exception {
-        when(publisher.produce(50)).thenReturn(new ProduceResult(50, 3));
+    void returnsSentDuplicateAndInvalidCounts() throws Exception {
+        when(publisher.produce(50)).thenReturn(new ProduceResult(50, 3, 2));
 
         mvc.perform(post("/produce").param("count", "50"))
                 .andExpect(status().isOk())
-                .andExpect(content().json("{\"sent\":50,\"duplicates\":3}", true));
+                .andExpect(content().json("{\"sent\":50,\"duplicates\":3,\"invalid\":2}", true));
     }
 
     @ParameterizedTest

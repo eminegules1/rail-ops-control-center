@@ -40,7 +40,7 @@ spring:
     listener:
       concurrency: 3
       # Offsets are committed only after the event is stored; MANUAL_IMMEDIATE also lets the error
-      # handler commit the offsets of skipped invalid records.
+      # handler commit the offsets of records it sent to the dead-letter topic.
       ack-mode: manual_immediate
 
 ingestion:
@@ -48,6 +48,15 @@ ingestion:
     name: incident-events
     partitions: 3
     retention: 24h
+  dead-letter:
+    name: incident-events.DLT
+    retention: 7d
+  # 1s, 2s, 4s, 8s, 16s, then 30s: about 2 minutes of retries before a record goes to the dead-letter topic.
+  retry:
+    initial-interval: 1s
+    multiplier: 2.0
+    max-interval: 30s
+    max-retries: 8
 
 logging:
   level:

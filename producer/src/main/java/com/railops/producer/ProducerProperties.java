@@ -16,6 +16,7 @@ import org.springframework.validation.annotation.Validated;
 public record ProducerProperties(
         @Min(100) long intervalMs,
         @DecimalMin("0.0") @DecimalMax("1.0") double duplicateRatio,
+        @DecimalMin("0.0") @DecimalMax("1.0") double invalidRatio,
         @Min(0) @Max(1000) int seedCount,
         @Valid @NotNull Topic topic) {
 

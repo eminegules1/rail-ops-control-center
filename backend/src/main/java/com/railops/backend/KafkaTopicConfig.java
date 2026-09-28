@@ -19,4 +19,14 @@ class KafkaTopicConfig {
                 .config(TopicConfig.RETENTION_MS_CONFIG, String.valueOf(topic.retention().toMillis()))
                 .build();
     }
+
+    // The dead-letter recoverer keeps the source partition, so this topic needs at least as many partitions.
+    @Bean
+    NewTopic deadLetterTopic(IngestionProperties properties) {
+        IngestionProperties.DeadLetter deadLetter = properties.deadLetter();
+        return TopicBuilder.name(deadLetter.name())
+                .partitions(properties.topic().partitions())
+                .config(TopicConfig.RETENTION_MS_CONFIG, String.valueOf(deadLetter.retention().toMillis()))
+                .build();
+    }
 }

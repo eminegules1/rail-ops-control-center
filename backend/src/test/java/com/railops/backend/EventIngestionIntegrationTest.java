@@ -3,11 +3,13 @@ package com.railops.backend;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.OffsetSpec;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.junit.jupiter.api.Test;
@@ -17,6 +19,7 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.kafka.core.KafkaAdmin;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.KafkaHeaders;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -54,10 +57,10 @@ class EventIngestionIntegrationTest {
     @Autowired
     private StringRedisTemplate redisTemplate;
 
-    // Ends on invalid records (the last a tombstone), so reaching the end offset proves that skipped records'
+    // Ends on invalid records (the last a tombstone), so reaching the end offset proves that dead-lettered records'
     // offsets are committed, not just covered by a later valid record's ack.
     @Test
-    void storesValidEventsOnceAndSkipsInvalidOnes() throws Exception {
+    void storesValidEventsOnceAndSendsInvalidOnesToTheDeadLetterTopic() throws Exception {
         String first = event("EVT-1", "CBTC", KEY, "CRITICAL", "\"EVT-1 message\"");
         List<String> payloads = List.of(
                 first,
@@ -68,15 +71,16 @@ class EventIngestionIntegrationTest {
                 event("EVT-3", "CBTC", "s".repeat(100), "INFO", "\"long service\""),
                 event("EVT-4", "XYZ", KEY, "INFO", "\"unknown source\""),
                 event("EVT-6", "CBTC", KEY, "3", "\"enum ordinal\""),
-                // Passes validation, but Postgres rejects the NUL byte: skipped, not retried forever.
+                // Passes validation, but Postgres rejects the NUL byte: dead-lettered, not retried.
                 event("EVT-7", "CBTC", KEY, "INFO", "\"a\\u0000b\""),
                 event("EVT-5", "ATS", KEY, "WARNING", "\"second valid\""),
                 "[]");
 
-        int partition = -1;
+        int lastPartition = -1;
         for (String payload : payloads) {
-            partition = kafkaTemplate.send(TOPIC, KEY, payload).get().getRecordMetadata().partition();
+            lastPartition = kafkaTemplate.send(TOPIC, KEY, payload).get().getRecordMetadata().partition();
         }
+        int partition = lastPartition;
         kafkaTemplate.send(TOPIC, KEY, null).get();
         TopicPartition topicPartition = new TopicPartition(TOPIC, partition);
 
@@ -98,6 +102,26 @@ class EventIngestionIntegrationTest {
                 .containsEntry("active:CRITICAL", "1")
                 .containsEntry("active:WARNING", "1")
                 .containsEntry("openCount", "2");
+
+        List<ConsumerRecord<String, byte[]>> deadLetters = DeadLetters.read(kafka.getBootstrapServers(), 9);
+        assertThat(deadLetters).allSatisfy(record -> {
+            assertThat(record.key()).isEqualTo(KEY);
+            assertThat(record.partition()).isEqualTo(partition);
+            assertThat(record.headers().lastHeader(KafkaHeaders.DLT_ORIGINAL_TOPIC).value()).asString().isEqualTo(TOPIC);
+            assertThat(record.headers().lastHeader(KafkaHeaders.DLT_EXCEPTION_FQCN)).isNotNull();
+        });
+        // Unreadable payloads keep their original bytes; payloads that were read are published as event JSON.
+        assertThat(deadLetters).extracting(r -> r.value() == null ? null : new String(r.value(), StandardCharsets.UTF_8))
+                .containsExactly(
+                        "{not json",
+                        payloads.get(3),
+                        event(" ", "CBTC", KEY, "INFO", "\"blank id\""),
+                        event("EVT-3", "CBTC", "s".repeat(100), "INFO", "\"long service\""),
+                        event("EVT-4", "XYZ", KEY, "INFO", "\"unknown source\""),
+                        payloads.get(7),
+                        payloads.get(8),
+                        "[]",
+                        null);
     }
 
     private static long committedOffset(AdminClient admin, TopicPartition partition) throws Exception {
