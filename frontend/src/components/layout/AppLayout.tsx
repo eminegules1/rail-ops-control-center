@@ -7,6 +7,7 @@ import ListItemText from '@mui/material/ListItemText'
 import Toolbar from '@mui/material/Toolbar'
 import Typography from '@mui/material/Typography'
 import { NavLink, Outlet } from 'react-router'
+import { ConnectionChip } from './ConnectionChip'
 import { ThemeSwitch } from './ThemeSwitch'
 
 const NAV_WIDTH = 200
@@ -25,6 +26,7 @@ export function AppLayout() {
           <Typography component="div" variant="subtitle1" sx={{ fontWeight: 600, flexGrow: 1 }}>
             Rail Ops Control Center
           </Typography>
+          <ConnectionChip />
           <ThemeSwitch />
         </Toolbar>
       </AppBar>

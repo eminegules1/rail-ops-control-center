@@ -1,10 +1,11 @@
 import { keepPreviousData, useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toApiQuery } from '../lib/eventSearch'
 import type { EventSearch } from '../lib/eventSearch'
+import { markChanged } from '../lib/highlights'
 import type { EventStatus, IncidentEvent } from '../types/dashboard'
 import type { EventPage } from '../types/events'
 import { fetchJson, sendJson } from './client'
-import { DASHBOARD_POLL_MS } from './dashboard'
+import { useLivePollInterval } from './dashboard'
 
 export const eventKeys = {
   all: ['events'] as const,
@@ -20,7 +21,8 @@ export function eventPath(eventId: string): string {
 
 /** Polls like the dashboard, but not while a status change is in flight, so a stale poll can't undo it. */
 function usePollInterval(): number | false {
-  return useIsMutating({ mutationKey: eventKeys.statusChange }) > 0 ? false : DASHBOARD_POLL_MS
+  const pollInterval = useLivePollInterval()
+  return useIsMutating({ mutationKey: eventKeys.statusChange }) > 0 ? false : pollInterval
 }
 
 export function useEvents(search: EventSearch) {
@@ -43,7 +45,7 @@ export function useEvent(eventId: string | undefined) {
   })
 }
 
-type StatusChange = { eventId: string; status: EventStatus }
+export type StatusChange = { eventId: string; status: EventStatus }
 
 /** Outcome callbacks. They run even if the caller has unmounted by the time the backend answers. */
 export type StatusChangeCallbacks = {
@@ -73,7 +75,11 @@ export function useChangeEventStatus({ onSuccess, onError }: StatusChangeCallbac
       if (detail) queryClient.setQueryData(eventKeys.detail(eventId), patch(detail))
       return { lists, detail }
     },
-    onSuccess: (event) => onSuccess?.(event),
+    onSuccess: (event) => {
+      // Highlights even while the socket is down, since this didn't arrive through it.
+      markChanged(event.eventId)
+      onSuccess?.(event)
+    },
     onError: (error, { eventId }, snapshot) => {
       snapshot?.lists.forEach(([key, page]) => queryClient.setQueryData(key, page))
       if (snapshot?.detail) queryClient.setQueryData(eventKeys.detail(eventId), snapshot.detail)

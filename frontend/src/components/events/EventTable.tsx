@@ -7,12 +7,20 @@ import TableContainer from '@mui/material/TableContainer'
 import TableHead from '@mui/material/TableHead'
 import TablePagination from '@mui/material/TablePagination'
 import TableRow from '@mui/material/TableRow'
+import { keyframes } from '@mui/material/styles'
 import { Link as RouterLink, useLocation, useNavigate } from 'react-router'
 import { EVENTS_PAGE_SIZE } from '../../lib/eventSearch'
 import { formatDateTime, formatTime } from '../../lib/format'
+import { HIGHLIGHT_MS, useRecentlyChanged } from '../../lib/highlights'
+import type { IncidentEvent } from '../../types/dashboard'
 import type { EventPage } from '../../types/events'
 import { EmptyState, Panel } from '../dashboard/Panel'
 import { SeverityChip } from '../dashboard/StatusChips'
+
+const highlightFade = keyframes`
+  from { background-color: rgba(33, 150, 243, 0.16); }
+  to { background-color: transparent; }
+`
 
 type Props = {
   data: EventPage | undefined
@@ -62,33 +70,12 @@ export function EventTable({ data, loading, error, page, filtered, onPageChange,
             </TableHead>
             <TableBody>
               {events.map((event) => (
-                <TableRow
+                <EventRow
                   key={event.eventId}
-                  hover
+                  event={event}
+                  detailPath={detailPath(event.eventId)}
                   onClick={() => navigate(detailPath(event.eventId))}
-                  sx={{ cursor: 'pointer' }}
-                >
-                  <TableCell title={formatDateTime(event.timestamp)}>{formatTime(event.timestamp)}</TableCell>
-                  <TableCell>
-                    <SeverityChip severity={event.severity} />
-                  </TableCell>
-                  <TableCell sx={noWrap} title={event.service}>
-                    {event.service}
-                  </TableCell>
-                  <TableCell sx={noWrap} title={event.source}>
-                    {event.source}
-                  </TableCell>
-                  <TableCell>{event.status}</TableCell>
-                  <TableCell sx={noWrap} title={event.message}>
-                    {event.message}
-                  </TableCell>
-                  <TableCell sx={noWrap} title={event.eventId}>
-                    {/* The keyboard route to the detail; the row click is a mouse shortcut. */}
-                    <Link component={RouterLink} to={detailPath(event.eventId)} onClick={(e) => e.stopPropagation()}>
-                      {event.eventId}
-                    </Link>
-                  </TableCell>
-                </TableRow>
+                />
               ))}
             </TableBody>
           </Table>
@@ -105,6 +92,54 @@ export function EventTable({ data, loading, error, page, filtered, onPageChange,
         />
       )}
     </Panel>
+  )
+}
+
+type RowProps = {
+  event: IncidentEvent
+  detailPath: string
+  onClick: () => void
+}
+
+/** A pushed create/update, or the operator's own status change, briefly highlights this row (see `highlights.ts`). */
+function EventRow({ event, detailPath, onClick }: RowProps) {
+  const highlighted = useRecentlyChanged(event.eventId)
+
+  return (
+    <TableRow
+      hover
+      onClick={onClick}
+      data-highlight={highlighted ? 'true' : undefined}
+      sx={{
+        cursor: 'pointer',
+        animation: highlighted ? `${highlightFade} ${HIGHLIGHT_MS}ms ease-out` : 'none',
+        '@media (prefers-reduced-motion: reduce)': {
+          animation: 'none',
+          bgcolor: highlighted ? 'rgba(33, 150, 243, 0.16)' : undefined,
+        },
+      }}
+    >
+      <TableCell title={formatDateTime(event.timestamp)}>{formatTime(event.timestamp)}</TableCell>
+      <TableCell>
+        <SeverityChip severity={event.severity} />
+      </TableCell>
+      <TableCell sx={noWrap} title={event.service}>
+        {event.service}
+      </TableCell>
+      <TableCell sx={noWrap} title={event.source}>
+        {event.source}
+      </TableCell>
+      <TableCell>{event.status}</TableCell>
+      <TableCell sx={noWrap} title={event.message}>
+        {event.message}
+      </TableCell>
+      <TableCell sx={noWrap} title={event.eventId}>
+        {/* The keyboard route to the detail; the row click is a mouse shortcut. */}
+        <Link component={RouterLink} to={detailPath} onClick={(e) => e.stopPropagation()}>
+          {event.eventId}
+        </Link>
+      </TableCell>
+    </TableRow>
   )
 }
 

@@ -1,6 +1,8 @@
 import { QueryClient } from '@tanstack/react-query'
-import { screen, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { DASHBOARD_POLL_MS } from '../api/dashboard'
+import { createFakeLiveConnection } from '../test/fakeLiveConnection'
 import { renderApp } from '../test/renderApp'
 import type { DashboardSummary, IncidentEvent, TimelineBucket } from '../types/dashboard'
 
@@ -10,23 +12,28 @@ type Responses = {
   recent: IncidentEvent[]
 }
 
-/** Answers each dashboard URL with its JSON, or with `status` for every request. */
+/** Answers each dashboard URL with its JSON, or with `status` for every request. Returns the mock so a test can
+ * inspect the calls. */
 function stubApi(responses: Responses | { status: number }) {
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async (url: string) => {
-      if ('status' in responses) {
-        return Response.json({ title: 'Internal Server Error', status: responses.status }, { status: responses.status })
-      }
-      if (url.startsWith('/api/dashboard/summary')) return Response.json(responses.summary)
-      if (url.startsWith('/api/dashboard/timeline')) return Response.json(responses.timeline)
-      if (url.startsWith('/api/dashboard/recent-events')) return Response.json(responses.recent)
-      return new Response(null, { status: 404 })
-    }),
-  )
+  const fetchMock = vi.fn(async (url: string) => {
+    if ('status' in responses) {
+      return Response.json({ title: 'Internal Server Error', status: responses.status }, { status: responses.status })
+    }
+    if (url.startsWith('/api/dashboard/summary')) return Response.json(responses.summary)
+    if (url.startsWith('/api/dashboard/timeline')) return Response.json(responses.timeline)
+    if (url.startsWith('/api/dashboard/recent-events')) return Response.json(responses.recent)
+    return new Response(null, { status: 404 })
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  return fetchMock
+}
+
+function summaryCallCount(fetchMock: ReturnType<typeof stubApi>): number {
+  return fetchMock.mock.calls.filter(([url]) => (url as string).startsWith('/api/dashboard/summary')).length
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
@@ -114,6 +121,41 @@ describe('dashboard page', () => {
     expect(within(row).getByText('OPEN')).toBeInTheDocument()
 
     expect(screen.queryByText("Can't reach the backend - retrying")).not.toBeInTheDocument()
+  })
+
+  it('updates the KPI cards from a pushed summary, without waiting on a fetch', async () => {
+    stubApi(empty)
+    const live = createFakeLiveConnection()
+    renderApp('/dashboard', undefined, live.connect)
+
+    const total = screen.getByRole('region', { name: 'Total events' })
+    await within(total).findByText('0')
+
+    act(() => live.simulateSummaryMessage(JSON.stringify(populated.summary)))
+
+    // React Query's notifyManager batches cache-update notifications on a real timer, not a microtask.
+    await waitFor(() => expect(within(total).getByText((1234).toLocaleString())).toBeInTheDocument())
+    expect(within(screen.getByRole('region', { name: 'Open' })).getByText('120')).toBeInTheDocument()
+  })
+
+  it('polls only while the connection is not live', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const fetchMock = stubApi(empty)
+    const live = createFakeLiveConnection()
+    renderApp('/dashboard', undefined, live.connect)
+    await screen.findByRole('region', { name: 'Total events' })
+
+    // A connect reconciles once over REST; wait for that call before measuring polling from a stable baseline.
+    act(() => live.simulateConnect())
+    await waitFor(() => expect(summaryCallCount(fetchMock)).toBeGreaterThan(0))
+    const callsWhileLive = summaryCallCount(fetchMock)
+
+    await act(async () => vi.advanceTimersByTimeAsync(DASHBOARD_POLL_MS))
+    expect(summaryCallCount(fetchMock)).toBe(callsWhileLive)
+
+    act(() => live.simulateDisconnect())
+    await act(async () => vi.advanceTimersByTimeAsync(DASHBOARD_POLL_MS))
+    expect(summaryCallCount(fetchMock)).toBeGreaterThan(callsWhileLive)
   })
 
   it('shows empty states when there are no events yet', async () => {

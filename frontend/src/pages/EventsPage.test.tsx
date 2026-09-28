@@ -2,6 +2,8 @@ import { QueryClient } from '@tanstack/react-query'
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { HIGHLIGHT_MS, _clearHighlightsForTests } from '../lib/highlights'
+import { createFakeLiveConnection } from '../test/fakeLiveConnection'
 import { renderApp } from '../test/renderApp'
 import type { DashboardSummary, IncidentEvent } from '../types/dashboard'
 import type { EventPage } from '../types/events'
@@ -74,6 +76,7 @@ function problem(status: number, detail: string) {
 afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
+  _clearHighlightsForTests()
 })
 
 describe('events table', () => {
@@ -93,6 +96,57 @@ describe('events table', () => {
     expect(within(row).getByText('OPEN')).toBeInTheDocument()
     expect(within(row).getByRole('link', { name: 'EVT-1' })).toHaveAttribute('href', '/events/EVT-1')
     expect(screen.getByText('1–20 of 42')).toBeInTheDocument()
+  })
+
+  it('updates and briefly highlights a row from a pushed UPDATED event', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    // A pushed UPDATED also triggers a throttled, best-effort reconciling refetch of the list (backend now
+    // agrees, as it would for real); the list stub reflects that so the row settles on ACKNOWLEDGED either way.
+    let listCalls = 0
+    stubApi({
+      list: () => {
+        listCalls += 1
+        const status = listCalls === 1 ? 'OPEN' : 'ACKNOWLEDGED'
+        return Response.json(page([{ ...signalFailure, status }, doorFault]))
+      },
+    })
+    const live = createFakeLiveConnection()
+    renderApp('/events', undefined, live.connect)
+
+    const row = (await screen.findByText('<b>Signal failure</b> at junction 4')).closest('tr')!
+    expect(within(row).getByText('OPEN')).toBeInTheDocument()
+    expect(row).not.toHaveAttribute('data-highlight')
+
+    act(() =>
+      live.simulateEventMessage(
+        JSON.stringify({
+          type: 'UPDATED',
+          event: { ...signalFailure, status: 'ACKNOWLEDGED', updatedAt: '2026-09-27T12:35:00Z' },
+        }),
+      ),
+    )
+
+    await waitFor(() => expect(within(row).getByText('ACKNOWLEDGED')).toBeInTheDocument())
+    expect(row).toHaveAttribute('data-highlight', 'true')
+
+    act(() => vi.advanceTimersByTime(HIGHLIGHT_MS))
+    expect(row).not.toHaveAttribute('data-highlight')
+  })
+
+  it('highlights the row after the operator\'s own status change succeeds', async () => {
+    stubApi({ status: () => Response.json({ ...signalFailure, status: 'ACKNOWLEDGED' }) })
+    renderApp('/events/EVT-1')
+
+    // By title, not text: the open drawer also shows the event's message, and hides the table from the
+    // accessibility tree behind aria-hidden while it's open.
+    const row = (await screen.findByTitle('<b>Signal failure</b> at junction 4')).closest('tr')!
+    expect(row).not.toHaveAttribute('data-highlight')
+
+    const drawer = await screen.findByRole('dialog', { name: 'EVT-1' })
+    await userEvent.click(await within(drawer).findByRole('button', { name: 'Acknowledge' }))
+
+    // Highlighted from the mutation's own success callback, not from a live push.
+    await waitFor(() => expect(row).toHaveAttribute('data-highlight', 'true'))
   })
 
   it('shows the empty state with no events and the filtered empty state with filters', async () => {
@@ -264,13 +318,16 @@ describe('status change', () => {
     const drawer = await screen.findByRole('dialog', { name: 'EVT-1' })
     await userEvent.click(await within(drawer).findByRole('button', { name: 'Acknowledge' }))
 
-    const confirmation = await screen.findByRole('status')
-    expect(confirmation).toHaveTextContent('EVT-1 status changed to ACKNOWLEDGED')
+    // The connection chip is also a role="status" region on every page (status has no name-from-content, so it
+    // can't be distinguished by name); find the toast among all status regions by its text instead.
+    const confirmationText = 'EVT-1 status changed to ACKNOWLEDGED'
+    const findConfirmation = () => screen.getAllByRole('status').find((el) => el.textContent?.includes(confirmationText))
+    await waitFor(() => expect(findConfirmation()).toBeDefined())
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 
     await userEvent.click(within(drawer).getByRole('button', { name: 'Close' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-    expect(screen.getByRole('status')).toHaveTextContent('EVT-1 status changed to ACKNOWLEDGED')
+    expect(findConfirmation()).toBeDefined()
   })
 
   it('reports a rejection that arrives after the drawer was closed', async () => {
