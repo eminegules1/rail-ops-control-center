@@ -1,6 +1,7 @@
 package com.railops.backend;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -9,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
@@ -27,6 +29,7 @@ import org.springframework.messaging.simp.stomp.StompFrameHandler;
 import org.springframework.messaging.simp.stomp.StompHeaders;
 import org.springframework.messaging.simp.stomp.StompSession;
 import org.springframework.messaging.simp.stomp.StompSessionHandlerAdapter;
+import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
 import org.testcontainers.containers.GenericContainer;
@@ -128,17 +131,45 @@ class LiveUpdatesIntegrationTest {
         assertThat(events.poll(2, TimeUnit.SECONDS)).isNull();
     }
 
+    // The same-origin check is the only browser-facing guard on /ws; a client without an Origin is always accepted.
+    @Test
+    void refusesHandshakeFromAnotherOrigin() {
+        assertThatThrownBy(() -> connect(origin("http://evil.example")))
+                .isInstanceOf(ExecutionException.class)
+                .hasStackTraceContaining("403");
+    }
+
+    @Test
+    void acceptsHandshakeFromTheServersOwnOrigin() throws Exception {
+        assertThat(connect(origin("http://localhost:" + port)).isConnected()).isTrue();
+    }
+
+    private static WebSocketHttpHeaders origin(String origin) {
+        WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+        headers.setOrigin(origin);
+        return headers;
+    }
+
     private StompSession connect() throws Exception {
         return connect(new StompSessionHandlerAdapter() {
         });
     }
 
+    private StompSession connect(WebSocketHttpHeaders headers) throws Exception {
+        return connect(headers, new StompSessionHandlerAdapter() {
+        });
+    }
+
     private StompSession connect(StompSessionHandlerAdapter handler) throws Exception {
+        return connect(new WebSocketHttpHeaders(), handler);
+    }
+
+    private StompSession connect(WebSocketHttpHeaders headers, StompSessionHandlerAdapter handler) throws Exception {
         WebSocketStompClient client = new WebSocketStompClient(new StandardWebSocketClient());
         MappingJackson2MessageConverter converter = new MappingJackson2MessageConverter();
         converter.setObjectMapper(json);
         client.setMessageConverter(converter);
-        StompSession session = client.connectAsync("ws://localhost:" + port + "/ws", handler)
+        StompSession session = client.connectAsync("ws://localhost:" + port + "/ws", headers, handler)
                 .get(10, TimeUnit.SECONDS);
         sessions.add(session);
         return session;

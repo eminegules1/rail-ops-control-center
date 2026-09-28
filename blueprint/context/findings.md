@@ -23,7 +23,7 @@ with a `pg_trgm` GIN index on `lower(message)` in a new Flyway migration, or by
 keeping the default time-window sort without an exact total.
 **Resolution:**
 
-### F-04 [P3] open - Cross-origin handshake rejection on /ws has no automated test
+### F-04 [P3] fixed - Cross-origin handshake rejection on /ws has no automated test
 
 **File:** backend/src/main/java/com/railops/backend/WebSocketConfig.java:40
 **Found:** 2026-09-28 by /audit independent (scope: current; lens: tests, security)
@@ -37,7 +37,7 @@ test green. The only evidence is the manual curl check in step 4.
 `WebSocketHttpHeaders` carrying `Origin: http://evil.example` and assert the
 handshake fails (403), and optionally once with `Origin: http://localhost:<port>`
 and assert it succeeds. No production change.
-**Resolution:**
+**Resolution:** Fixed by fix `test-cross-origin-rejection-on-the-websocket-endpoint`. `LiveUpdatesIntegrationTest.refusesHandshakeFromAnotherOrigin` connects with `Origin: http://evil.example` and requires the handshake to fail with 403; `acceptsHandshakeFromTheServersOwnOrigin` connects with the server's own origin. Widening the endpoint to `setAllowedOriginPatterns("*")` makes the first test fail. Awaiting re-review.
 
 ### F-05 [P3] unverified - A CREATED push can arrive after an UPDATED push for the same event with a stale status
 
