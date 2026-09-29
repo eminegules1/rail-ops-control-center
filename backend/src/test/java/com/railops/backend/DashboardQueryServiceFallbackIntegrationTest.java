@@ -3,6 +3,10 @@ package com.railops.backend;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import java.time.Instant;
@@ -12,8 +16,10 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
@@ -45,13 +51,22 @@ class DashboardQueryServiceFallbackIntegrationTest {
     private IncidentEventRepository repository;
 
     private DashboardQueryService dashboard;
+    private final ListAppender<ILoggingEvent> logged = new ListAppender<>();
+    private final Logger serviceLogger = (Logger) LoggerFactory.getLogger(DashboardQueryService.class);
 
     @BeforeEach
     void setUp() {
+        logged.start();
+        serviceLogger.addAppender(logged);
         repository.deleteAll();
         StringRedisTemplate brokenRedis = mock(StringRedisTemplate.class,
                 invocation -> { throw new RedisConnectionFailureException("Redis is down"); });
         dashboard = new DashboardQueryService(brokenRedis, repository, JSON, CircuitBreaker.ofDefaults("test"));
+    }
+
+    @AfterEach
+    void detachAppender() {
+        serviceLogger.detachAppender(logged);
     }
 
     @Test
@@ -126,6 +141,29 @@ class DashboardQueryServiceFallbackIntegrationTest {
     @Test
     void recentEventsOfEmptyPostgresIsEmpty() {
         assertThat(dashboard.recentEvents(20)).isEmpty();
+    }
+
+    @Test
+    void fallbacksLogOneWarnLineWithoutAStackTrace() {
+        insert("EVT-1", "signal-service", Severity.CRITICAL, EventStatus.OPEN, Instant.now());
+
+        DashboardSummary summary = dashboard.summary();
+        dashboard.buildSummary();
+        List<ServiceState> services = dashboard.services();
+        dashboard.timeline(3, Instant.now());
+        List<EventResponse> recent = dashboard.recentEvents(5);
+
+        assertThat(summary.totalEvents()).isEqualTo(1);
+        assertThat(services).hasSize(1);
+        assertThat(recent).hasSize(1);
+        List<ILoggingEvent> warnings = logged.list.stream().filter(e -> e.getLevel() == Level.WARN).toList();
+        assertThat(warnings).hasSize(5);
+        assertThat(warnings).allSatisfy(event -> {
+            assertThat(event.getThrowableProxy()).isNull();
+            assertThat(event.getFormattedMessage())
+                    .contains("Redis unavailable")
+                    .contains("RedisConnectionFailureException: Redis is down");
+        });
     }
 
     private void insert(String eventId, String service, Severity severity, EventStatus status, Instant timestamp) {

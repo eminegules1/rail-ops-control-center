@@ -61,7 +61,7 @@ public class DashboardQueryService {
             entry = circuitBreaker.executeSupplier(() -> redis.opsForValue()
                     .multiGet(List.of(LiveStateUpdater.SUMMARY_CACHE_KEY, LiveStateUpdater.SUMMARY_VERSION_KEY)));
         } catch (DataAccessException | CallNotPermittedException e) {
-            log.warn("Dashboard summary served from Postgres; Redis unavailable", e);
+            logFallback("Dashboard summary served from Postgres; Redis unavailable", e);
             return summaryFromPostgres();
         }
         String cached = entry.get(0);
@@ -76,7 +76,7 @@ public class DashboardQueryService {
         try {
             cacheSummary(summary, entry.get(1));
         } catch (DataAccessException | CallNotPermittedException e) {
-            log.warn("Dashboard summary not cached; Redis unavailable", e);
+            logFallback("Dashboard summary not cached; Redis unavailable", e);
         }
         return summary;
     }
@@ -105,7 +105,7 @@ public class DashboardQueryService {
         try {
             return circuitBreaker.executeSupplier(this::servicesFromRedis);
         } catch (DataAccessException | CallNotPermittedException e) {
-            log.warn("Service states served from Postgres; Redis unavailable", e);
+            logFallback("Service states served from Postgres; Redis unavailable", e);
             return servicesFromPostgres();
         }
     }
@@ -160,7 +160,7 @@ public class DashboardQueryService {
         try {
             return circuitBreaker.executeSupplier(() -> timelineFromRedis(starts));
         } catch (DataAccessException | CallNotPermittedException e) {
-            log.warn("Timeline served from Postgres; Redis unavailable", e);
+            logFallback("Timeline served from Postgres; Redis unavailable", e);
             return timelineFromPostgres(starts);
         }
     }
@@ -210,7 +210,7 @@ public class DashboardQueryService {
         try {
             ids = circuitBreaker.executeSupplier(() -> redis.opsForList().range("recent:events", 0, limit - 1L));
         } catch (DataAccessException | CallNotPermittedException e) {
-            log.warn("Recent events served from Postgres; Redis unavailable", e);
+            logFallback("Recent events served from Postgres; Redis unavailable", e);
             return repository.findByOrderByReceivedAtDesc(PageRequest.of(0, limit)).stream()
                     .map(EventResponse::from)
                     .toList();
@@ -233,7 +233,7 @@ public class DashboardQueryService {
         try {
             return circuitBreaker.executeSupplier(this::buildSummaryFromRedis);
         } catch (DataAccessException | CallNotPermittedException e) {
-            log.warn("Dashboard summary built from Postgres; Redis unavailable", e);
+            logFallback("Dashboard summary built from Postgres; Redis unavailable", e);
             return summaryFromPostgres();
         }
     }
@@ -269,6 +269,12 @@ public class DashboardQueryService {
                 .map(service -> new ServiceSummary(service.name(), service.status(), service.lastEventTime()))
                 .toList();
         return new DashboardSummary(total, open, acknowledged, criticalActive, distribution, services);
+    }
+
+    /** One WARN line per fallback, without the stack trace a Redis outage would repeat on every request. */
+    private static void logFallback(String message, RuntimeException cause) {
+        log.warn("{}: {}: {}", message, cause.getClass().getSimpleName(), cause.getMessage());
+        log.debug("Redis failure behind the fallback", cause);
     }
 
     /** Same precedence the {@code apply-event} Lua script uses to derive a service's health. */
