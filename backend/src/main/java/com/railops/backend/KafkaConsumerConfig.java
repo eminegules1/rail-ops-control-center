@@ -3,6 +3,7 @@ package com.railops.backend;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.sql.SQLException;
 import java.util.Map;
 import java.util.Objects;
@@ -13,6 +14,7 @@ import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -43,21 +45,27 @@ class KafkaConsumerConfig implements DisposableBean {
     private DefaultKafkaProducerFactory<String, Object> deadLetterProducerFactory;
 
     @Bean
-    DefaultErrorHandler kafkaErrorHandler(IngestionProperties properties, ProducerFactory<?, ?> producerFactory) {
+    DefaultErrorHandler kafkaErrorHandler(IngestionProperties properties, ProducerFactory<?, ?> producerFactory,
+                                          MeterRegistry meterRegistry) {
         deadLetterProducerFactory = deadLetterProducerFactory(producerFactory);
-        return errorHandler(properties, new KafkaTemplate<>(deadLetterProducerFactory));
+        return errorHandler(properties, new KafkaTemplate<>(deadLetterProducerFactory), meterRegistry);
     }
 
     /** The handler with the dead-letter sender passed in, so tests can make the send fail. */
-    static DefaultErrorHandler errorHandler(IngestionProperties properties, KafkaOperations<?, ?> deadLetterTemplate) {
+    static DefaultErrorHandler errorHandler(IngestionProperties properties, KafkaOperations<?, ?> deadLetterTemplate,
+                                            MeterRegistry meterRegistry) {
         String deadLetterTopic = properties.deadLetter().name();
         DeadLetterPublishingRecoverer publisher = new DeadLetterPublishingRecoverer(deadLetterTemplate,
                 (record, exception) -> new TopicPartition(deadLetterTopic, record.partition()));
         DefaultErrorHandler handler = new DefaultErrorHandler((record, exception) -> {
             // Throws if Kafka does not confirm the send; the record is then attempted again, never skipped.
             publisher.accept(record, exception);
-            log.warn("Sent event at {}-{}@{} to {}: {}", record.topic(), record.partition(), record.offset(),
-                    deadLetterTopic, reason(exception));
+            if (isInvalidPayload(exception)) {
+                meterRegistry.counter("ingestion.events", "outcome", "invalid").increment();
+            }
+            meterRegistry.counter("ingestion.events", "outcome", "dlt").increment();
+            withEventIdMdc(record, () -> log.warn("Sent event at {}-{}@{} to {}: {}", record.topic(),
+                    record.partition(), record.offset(), deadLetterTopic, reason(exception)));
         }, backOff(properties.retry()));
         // DeserializationException is already non-retryable by default.
         handler.addNotRetryableExceptions(InvalidEventException.class, DataIntegrityViolationException.class);
@@ -65,9 +73,9 @@ class KafkaConsumerConfig implements DisposableBean {
         handler.setCommitRecovered(true);
         // Every failed attempt is logged with a short reason, so outages stay visible without logging row data.
         // Invalid records fail once and then go to the dead-letter topic.
-        handler.setRetryListeners((record, exception, attempt) -> log.warn(
-                "Failed to process event at {}-{}@{} (attempt {}): {}", record.topic(), record.partition(), record.offset(),
-                attempt, reason(exception)));
+        handler.setRetryListeners((record, exception, attempt) -> withEventIdMdc(record, () -> log.warn(
+                "Failed to process event at {}-{}@{} (attempt {}): {}", record.topic(), record.partition(),
+                record.offset(), attempt, reason(exception))));
         return handler;
     }
 
@@ -102,6 +110,41 @@ class KafkaConsumerConfig implements DisposableBean {
                 IncidentEventMessage.class, json));
         return new DefaultKafkaProducerFactory<>(producerFactory.getConfigurationProperties(), new StringSerializer(),
                 values);
+    }
+
+    /**
+     * Runs {@code action} with {@code eventId} in the MDC when the record's value deserialized to an event with one;
+     * a record that failed deserialization entirely has no {@code eventId} to attach.
+     */
+    private static void withEventIdMdc(ConsumerRecord<?, ?> record, Runnable action) {
+        String eventId = record.value() instanceof IncidentEventMessage message ? message.eventId() : null;
+        if (eventId == null) {
+            action.run();
+            return;
+        }
+        MDC.put("eventId", eventId);
+        try {
+            action.run();
+        } finally {
+            MDC.remove("eventId");
+        }
+    }
+
+    /**
+     * True when the record itself is broken (undeserializable JSON or a failed {@link InvalidEventException}
+     * validation) rather than a transient environment failure (for example a database error) whose retries ran out.
+     * A broken record never reached Postgres or Redis.
+     */
+    static boolean isInvalidPayload(Throwable exception) {
+        for (Throwable t = exception; t != null; t = t.getCause()) {
+            if (t instanceof InvalidEventException || t instanceof JsonProcessingException) {
+                return true;
+            }
+            if (t instanceof SQLException) {
+                return false;
+            }
+        }
+        return false;
     }
 
     /** A short reason that never echoes payload values. */

@@ -100,6 +100,35 @@ class KafkaConsumerConfigTest {
     }
 
     @Test
+    void classifiesInvalidEventExceptionAsAnInvalidPayload() {
+        Exception wrapped = new ListenerExecutionFailedException("listener failed",
+                new InvalidEventException("invalid fields: eventId"));
+
+        assertThat(KafkaConsumerConfig.isInvalidPayload(wrapped)).isTrue();
+    }
+
+    @Test
+    void classifiesUndeserializableJsonAsAnInvalidPayload() {
+        Exception parse = parseFailure("{not json");
+
+        assertThat(KafkaConsumerConfig.isInvalidPayload(deserializationFailure(parse))).isTrue();
+    }
+
+    @Test
+    void doesNotClassifyADatabaseErrorAsAnInvalidPayload() {
+        SQLException sql = new SQLException("ERROR: violates check", "23514");
+        Exception wrapped = new ListenerExecutionFailedException("listener failed",
+                new DataIntegrityViolationException("could not execute statement", sql));
+
+        assertThat(KafkaConsumerConfig.isInvalidPayload(wrapped)).isFalse();
+    }
+
+    @Test
+    void doesNotClassifyAnUnrelatedTransientFailureAsAnInvalidPayload() {
+        assertThat(KafkaConsumerConfig.isInvalidPayload(new IllegalStateException("simulated outage"))).isFalse();
+    }
+
+    @Test
     void backOffGrowsExponentiallyUpToTheCapThenStops() {
         BackOffExecution execution = KafkaConsumerConfig.backOff(new IngestionProperties.Retry(
                 Duration.ofSeconds(1), 2.0, Duration.ofSeconds(30), 8)).start();

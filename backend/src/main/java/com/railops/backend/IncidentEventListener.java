@@ -1,5 +1,6 @@
 package com.railops.backend;
 
+import org.slf4j.MDC;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.messaging.handler.annotation.Payload;
@@ -29,7 +30,18 @@ class IncidentEventListener {
             // A tombstone or empty value; it can never become an event.
             throw new InvalidEventException("empty payload");
         }
-        ingestionService.ingest(event);
-        ack.acknowledge();
+        // Missing from the payload only when the message doesn't even have this field; still not our eventId to log.
+        String eventId = event.eventId();
+        if (eventId != null) {
+            MDC.put("eventId", eventId);
+        }
+        try {
+            ingestionService.ingest(event);
+            ack.acknowledge();
+        } finally {
+            if (eventId != null) {
+                MDC.remove("eventId");
+            }
+        }
     }
 }

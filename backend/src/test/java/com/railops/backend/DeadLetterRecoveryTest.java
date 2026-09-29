@@ -9,6 +9,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -60,6 +61,12 @@ class DeadLetterRecoveryTest {
     private final Exception invalid = new ListenerExecutionFailedException("listener failed",
             new InvalidEventException("invalid fields: service"));
 
+    // A transient environment failure whose retries have run out; the payload itself was never bad.
+    private final Exception transientFailure = new ListenerExecutionFailedException("listener failed",
+            new IllegalStateException("simulated outage"));
+
+    private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+
     private DefaultErrorHandler handler;
 
     @BeforeEach
@@ -67,7 +74,7 @@ class DeadLetterRecoveryTest {
         ContainerProperties containerProperties = new ContainerProperties(PARTITION.topic());
         containerProperties.setAckMode(AckMode.MANUAL_IMMEDIATE);
         when(container.getContainerProperties()).thenReturn(containerProperties);
-        handler = KafkaConsumerConfig.errorHandler(PROPERTIES, deadLetterTemplate);
+        handler = KafkaConsumerConfig.errorHandler(PROPERTIES, deadLetterTemplate, meterRegistry);
     }
 
     @Test
@@ -80,6 +87,9 @@ class DeadLetterRecoveryTest {
         assertThat(thrown).as("the record is not treated as handled").isNotNull();
         verify(consumer).seek(PARTITION, OFFSET);
         assertThat(commits()).as("no offset is committed").isEmpty();
+        // Not yet confirmed on the DLT, so not counted yet either; a retry of the send will count it once.
+        assertThat(meterRegistry.counter("ingestion.events", "outcome", "invalid").count()).isZero();
+        assertThat(meterRegistry.counter("ingestion.events", "outcome", "dlt").count()).isZero();
     }
 
     @Test
@@ -98,6 +108,27 @@ class DeadLetterRecoveryTest {
         verify(consumer, never()).seek(any(TopicPartition.class), any(Long.class));
         assertThat(commits()).singleElement()
                 .isEqualTo(Map.of(PARTITION, new OffsetAndMetadata(OFFSET + 1)));
+        assertThat(meterRegistry.counter("ingestion.events", "outcome", "invalid").count()).isEqualTo(1);
+        assertThat(meterRegistry.counter("ingestion.events", "outcome", "dlt").count()).isEqualTo(1);
+    }
+
+    @Test
+    void confirmedDeadLetterSendForATransientFailureCountsDltButNotInvalid() {
+        // A retryable exception only reaches the recoverer once its retries are exhausted: the first attempt plus
+        // 1 configured retry here, matching the "first attempt plus max-retries" pattern EventRetryIntegrationTest
+        // proves against a real broker.
+        IngestionProperties oneRetry = new IngestionProperties(PROPERTIES.topic(), PROPERTIES.deadLetter(),
+                new IngestionProperties.Retry(Duration.ofMillis(1), 1.0, Duration.ofMillis(1), 1));
+        DefaultErrorHandler oneRetryHandler = KafkaConsumerConfig.errorHandler(oneRetry, deadLetterTemplate,
+                meterRegistry);
+        when(deadLetterTemplate.send(any(ProducerRecord.class)))
+                .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
+
+        catchThrowable(() -> oneRetryHandler.handleRemaining(transientFailure, List.of(record), consumer, container));
+        oneRetryHandler.handleRemaining(transientFailure, List.of(record), consumer, container);
+
+        assertThat(meterRegistry.counter("ingestion.events", "outcome", "invalid").count()).isZero();
+        assertThat(meterRegistry.counter("ingestion.events", "outcome", "dlt").count()).isEqualTo(1);
     }
 
     /** The offset maps passed to any commitSync overload. */

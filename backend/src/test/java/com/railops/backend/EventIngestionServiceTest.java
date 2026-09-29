@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import jakarta.validation.Validation;
 import jakarta.validation.ValidatorFactory;
 import java.time.Instant;
@@ -31,6 +32,7 @@ class EventIngestionServiceTest {
     private final LiveUpdatePublisher liveUpdates = mock(LiveUpdatePublisher.class);
     private final ReconcileState reconcileState = new ReconcileState();
     private final LiveStateLock liveStateLock = new LiveStateLock();
+    private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     private ValidatorFactory factory;
     private EventIngestionService service;
 
@@ -38,7 +40,7 @@ class EventIngestionServiceTest {
     void setUp() {
         factory = Validation.buildDefaultValidatorFactory();
         service = new EventIngestionService(repository, factory.getValidator(), liveState, liveUpdates,
-                reconcileState, liveStateLock);
+                reconcileState, liveStateLock, meterRegistry);
     }
 
     @AfterEach
@@ -59,6 +61,7 @@ class EventIngestionServiceTest {
                 event.message(), "OPEN", event.timestamp());
         verify(liveState).applyEvent(event.eventId(), "signal-service", Severity.CRITICAL, EventStatus.OPEN,
                 event.timestamp());
+        assertThat(meterRegistry.counter("ingestion.events", "outcome", "processed").count()).isEqualTo(1);
     }
 
     // The stored first copy wins, so Redis gets its values rather than the conflicting duplicate's.
@@ -79,6 +82,7 @@ class EventIngestionServiceTest {
         assertThat(service.ingest(event)).isEqualTo(IngestionResult.DUPLICATE);
         verify(liveState).applyEvent(event.eventId(), "route-service", Severity.INFO, EventStatus.RESOLVED,
                 storedTimestamp);
+        assertThat(meterRegistry.counter("ingestion.events", "outcome", "processed").count()).isEqualTo(1);
     }
 
     @Test
@@ -169,6 +173,9 @@ class EventIngestionServiceTest {
                 .hasMessage("invalid fields: eventId, source")
                 .hasMessageNotContaining("XYZ");
         verifyNoInteractions(repository, liveState, liveUpdates);
+        // Rejected before any Postgres/Redis work; EventIngestionService never counts it as processed. The
+        // "invalid" outcome is counted downstream, in the Kafka error handler that routes it to the DLT.
+        assertThat(meterRegistry.counter("ingestion.events", "outcome", "processed").count()).isZero();
     }
 
     @Test

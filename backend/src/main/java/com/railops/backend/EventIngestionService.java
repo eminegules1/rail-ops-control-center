@@ -1,6 +1,7 @@
 package com.railops.backend;
 
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validator;
 import java.util.Set;
@@ -21,16 +22,18 @@ public class EventIngestionService {
     private final LiveUpdatePublisher liveUpdates;
     private final ReconcileState reconcileState;
     private final LiveStateLock liveStateLock;
+    private final MeterRegistry meterRegistry;
 
     public EventIngestionService(IncidentEventRepository repository, Validator validator, LiveStateUpdater liveState,
                                  LiveUpdatePublisher liveUpdates, ReconcileState reconcileState,
-                                 LiveStateLock liveStateLock) {
+                                 LiveStateLock liveStateLock, MeterRegistry meterRegistry) {
         this.repository = repository;
         this.validator = validator;
         this.liveState = liveState;
         this.liveUpdates = liveUpdates;
         this.reconcileState = reconcileState;
         this.liveStateLock = liveStateLock;
+        this.meterRegistry = meterRegistry;
     }
 
     /**
@@ -93,6 +96,7 @@ public class EventIngestionService {
         if (applied || inserted == 1) {
             liveUpdates.eventCreated(EventResponse.from(stored));
         }
+        meterRegistry.counter("ingestion.events", "outcome", "processed").increment();
         if (inserted == 0) {
             return IngestionResult.DUPLICATE;
         }

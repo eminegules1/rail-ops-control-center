@@ -3,6 +3,7 @@ package com.railops.backend;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
@@ -56,6 +57,9 @@ class EventIngestionIntegrationTest {
 
     @Autowired
     private StringRedisTemplate redisTemplate;
+
+    @Autowired
+    private MeterRegistry meterRegistry;
 
     // Ends on invalid records (the last a tombstone), so reaching the end offset proves that dead-lettered records'
     // offsets are committed, not just covered by a later valid record's ack.
@@ -122,6 +126,11 @@ class EventIngestionIntegrationTest {
                         payloads.get(8),
                         "[]",
                         null);
+        // EVT-1 (stored) + its duplicate + EVT-5: 3 records completed ingestion without error.
+        assertThat(meterRegistry.counter("ingestion.events", "outcome", "processed").count()).isEqualTo(3);
+        // Every dead-lettered record except EVT-7: its payload was fine, Postgres rejected the NUL byte.
+        assertThat(meterRegistry.counter("ingestion.events", "outcome", "invalid").count()).isEqualTo(8);
+        assertThat(meterRegistry.counter("ingestion.events", "outcome", "dlt").count()).isEqualTo(9);
     }
 
     private static long committedOffset(AdminClient admin, TopicPartition partition) throws Exception {

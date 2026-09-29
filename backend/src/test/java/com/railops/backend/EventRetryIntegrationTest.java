@@ -7,6 +7,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
@@ -65,6 +66,9 @@ class EventRetryIntegrationTest {
     @MockitoSpyBean
     private EventIngestionService ingestionService;
 
+    @Autowired
+    private MeterRegistry meterRegistry;
+
     // Ends on a failing record, so reaching the end offset proves the retry-exhausted record's offset is committed,
     // not just covered by the valid record's ack.
     @Test
@@ -99,6 +103,10 @@ class EventRetryIntegrationTest {
         });
         assertThat(deadLetters).extracting(r -> new String(r.value(), StandardCharsets.UTF_8))
                 .containsExactlyElementsOf(failing);
+        // A transient failure that exhausted its retries: dead-lettered, but the payload itself was never invalid.
+        assertThat(meterRegistry.counter("ingestion.events", "outcome", "dlt").count()).isEqualTo(2);
+        assertThat(meterRegistry.counter("ingestion.events", "outcome", "invalid").count()).isZero();
+        assertThat(meterRegistry.counter("ingestion.events", "outcome", "processed").count()).isEqualTo(1);
     }
 
     private static long committedOffset(AdminClient admin, TopicPartition partition) throws Exception {
