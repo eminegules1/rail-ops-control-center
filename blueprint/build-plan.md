@@ -20,7 +20,7 @@ Every app feature adds its own Dockerfile and compose service and updates the RE
 - [x] 14. **Redis resilience** - Redis circuit breaker, Postgres fallback for dashboard reads, reconcile-needed flag and pause-and-rebuild reconciler
 - [x] 15. **Observability** - structured JSON logs, Actuator health, Prometheus metrics for processed/invalid/DLT events
 - [x] 16. **End-to-end test coverage** - Testcontainers flows for happy path, DLT and Redis-down fallback, plus coverage report
-- [ ] 17. **Clean-clone startup verification** - harden the compose stack (healthchecks, startup order, env defaults) and verify one-command startup on a clean clone
+- [x] 17. **Clean-clone startup verification** - harden the compose stack (healthchecks, startup order, env defaults) and verify one-command startup on a clean clone
 - [ ] 18. **CI pipeline** - GitHub Actions building and testing backend, producer and frontend
 - [ ] 19. **Delivery documentation** - final README, architecture diagram, API docs, Redis/Kafka and consumer-group design notes, performance notes, screenshots/demo video, known limitations
 

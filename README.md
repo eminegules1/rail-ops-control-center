@@ -11,6 +11,59 @@ Redis live state, and a React dashboard shows service health and incidents live.
 
 > Work in progress. Full setup, architecture, and API docs will land here.
 
+## Quick start
+
+**Prerequisites:** Docker Desktop (or Docker Engine) with Compose v2, running
+(`docker info` succeeds), with at least 4 GB of memory available to Docker. The
+whole stack uses about 1.7 GB once running. Nothing else needs to be installed:
+the Java and Node builds happen inside the images, and no `.env` file is needed.
+These host ports must be free: 3000, 8080, 8081, 8082, 5432, 6379 and 9092.
+
+From the repository root:
+
+```bash
+docker compose up -d --build --wait
+```
+
+The command builds the three app images, starts all seven services in
+dependency order and returns once every one reports `healthy`. Expect about 5
+minutes for the very first build (Maven and npm downloads) and 2 to 3 minutes
+more for the services to become healthy. Later starts take about 1.5 minutes.
+The bare `docker compose up --build` starts the same stack in the foreground.
+
+Then open:
+
+- Dashboard: http://localhost:3000 (it fills within seconds, because the
+  producer publishes about 200 events at startup)
+- Kafka UI: http://localhost:8081
+- API docs (Swagger UI): http://localhost:8080/swagger-ui/index.html
+
+```bash
+docker compose ps             # all 7 services should show (healthy)
+docker compose down           # stop, keeping data
+docker compose down -v        # stop and DELETE all data (Kafka, Redis, Postgres)
+```
+
+### Troubleshooting
+
+- **`port is already allocated` or `address already in use`:** another program
+  holds one of the host ports. Set the matching variable for that port in a
+  `.env` file (copy `.env.example`) or in your shell, then run the command
+  again. For example, if something else uses 8080, run
+  `BACKEND_PORT=8083 docker compose up -d --build --wait` (in PowerShell:
+  `$env:BACKEND_PORT=8083; docker compose up -d --build --wait`), and use
+  http://localhost:8083 for the backend. The variables are `FRONTEND_PORT`,
+  `BACKEND_PORT`, `KAFKA_UI_PORT`, `PRODUCER_PORT`, `POSTGRES_PORT`,
+  `REDIS_PORT` and `KAFKA_PORT`. The dashboard on port 3000 reaches the backend
+  through nginx, so it works whatever `BACKEND_PORT` is.
+- **A service stays `unhealthy`, or `--wait` reports one that failed:** run
+  `docker compose ps` to see which one, then `docker compose logs <service>`.
+  A build or container killed with exit code 137 usually means Docker ran out
+  of memory; raise its memory limit (Docker Desktop, Settings, Resources) to
+  4 GB or more.
+- **Git Bash on Windows rewrites paths in `docker compose exec` commands:**
+  prefix the command with `MSYS_NO_PATHCONV=1`.
+
 ## Repository layout
 
 - `frontend/` - React + TypeScript + Vite dashboard
@@ -21,16 +74,11 @@ Redis live state, and a React dashboard shows service health and incidents live.
 
 ## Local infrastructure
 
-**Prerequisite:** Docker Desktop running (`docker info` succeeds).
-
-From the repository root:
+The [Quick start](#quick-start) covers starting, stopping and resetting the
+stack. To follow one service's logs:
 
 ```bash
-docker compose up -d --build --wait   # build app images, start everything, wait until healthy
-docker compose ps             # every service should show (healthy)
-docker compose logs -f kafka  # follow one service's logs
-docker compose down           # stop, keeping data
-docker compose down -v        # stop and DELETE all data (Kafka, Redis, Postgres)
+docker compose logs -f kafka
 ```
 
 | Service | From the host | From other containers |
