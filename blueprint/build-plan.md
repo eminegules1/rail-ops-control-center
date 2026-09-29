@@ -22,7 +22,7 @@ Every app feature adds its own Dockerfile and compose service and updates the RE
 - [x] 16. **End-to-end test coverage** - Testcontainers flows for happy path, DLT and Redis-down fallback, plus coverage report
 - [x] 17. **Clean-clone startup verification** - harden the compose stack (healthchecks, startup order, env defaults) and verify one-command startup on a clean clone
 - [x] 18. **CI pipeline** - GitHub Actions building and testing backend, producer and frontend
-- [ ] 19. **Delivery documentation** - final README, architecture diagram, API docs, Redis/Kafka and consumer-group design notes, performance notes, screenshots/demo video, known limitations
+- [x] 19. **Delivery documentation** - final README, architecture diagram, API docs, Redis/Kafka and consumer-group design notes, performance notes, screenshots/demo video, known limitations
 
 ## Stretch (bonus - only if time allows, in value order)
 

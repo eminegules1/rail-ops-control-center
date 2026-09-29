@@ -9,7 +9,31 @@ Real-time incident monitoring for a rail operations center: a producer publishes
 service events to Kafka, a Spring Boot backend processes them into PostgreSQL and
 Redis live state, and a React dashboard shows service health and incidents live.
 
-> Work in progress. Full setup, architecture, and API docs will land here.
+## Contents
+
+- [Screenshots](#screenshots)
+- [Quick start](#quick-start)
+- [Architecture](#architecture), [Design notes](#design-notes), [Performance notes](#performance-notes)
+- [Testing](#testing), [Continuous integration](#continuous-integration)
+- [Repository layout](#repository-layout), [Local infrastructure](#local-infrastructure)
+- [Event producer](#event-producer), [Event ingestion](#event-ingestion-backend)
+- [Events API](#events-api), [Incident status update](#incident-status-update), [Dashboard data APIs](#dashboard-data-apis), [Real-time push](#real-time-push) - full reference in [docs/api.md](docs/api.md)
+- [Redis resilience](#redis-resilience), [Observability](#observability)
+- [Frontend](#frontend)
+- [Known limitations](#known-limitations)
+
+## Screenshots
+
+Captured from the running stack after several bursts of generated events, so
+every service shows `DOWN` and the counts are large. Times use the browser's locale.
+
+![Dashboard in light mode: totals, service health cards, severity distribution, events over time and recent events](docs/images/dashboard.png)
+
+![Events page with the detail drawer of one event open, showing its fields and a Reopen action](docs/images/events-detail.png)
+
+![Services page listing each service's health, open and active counts, latest severity and last event time](docs/images/services.png)
+
+![Dashboard in dark mode](docs/images/dashboard-dark.png)
 
 ## Quick start
 
@@ -64,6 +88,157 @@ docker compose down -v        # stop and DELETE all data (Kafka, Redis, Postgres
 - **Git Bash on Windows rewrites paths in `docker compose exec` commands:**
   prefix the command with `MSYS_NO_PATHCONV=1`.
 
+## Architecture
+
+```mermaid
+flowchart LR
+    Browser["Browser<br/>React dashboard"]
+    Nginx["frontend (nginx)<br/>:3000"]
+
+    subgraph Stack["docker compose"]
+        Producer["producer<br/>:8082"]
+        Kafka[("Kafka<br/>incident-events<br/>3 partitions, key = service")]
+        DLT[("incident-events.DLT")]
+
+        subgraph Backend["backend :8080"]
+            Listener["Kafka listener<br/>group incident-processor<br/>3 threads, manual ack"]
+            Services["ingestion and status services"]
+            Rest["REST API /api/**<br/>Swagger UI"]
+            Ws["STOMP /ws<br/>/topic/events, /topic/summary"]
+            Reconciler["live-state reconciler"]
+        end
+
+        Postgres[("PostgreSQL<br/>events table<br/>source of truth")]
+        Redis[("Redis<br/>live state and summary cache")]
+    end
+
+    Producer -->|"JSON events"| Kafka
+    Kafka --> Listener
+    Listener -->|"invalid or retries exhausted"| DLT
+    Listener --> Services
+    Services -->|"insert if absent"| Postgres
+    Services -->|"Lua scripts, circuit breaker"| Redis
+    Services -->|"changes"| Ws
+    Rest -->|"events list and detail"| Postgres
+    Rest -->|"dashboard reads"| Redis
+    Rest -.->|"fallback when Redis is down"| Postgres
+    Postgres -.->|"rebuild"| Reconciler
+    Reconciler -.-> Redis
+    Browser --> Nginx
+    Nginx -->|"/api"| Rest
+    Nginx -->|"/ws"| Ws
+```
+
+**Ingest path.** The producer publishes JSON events to `incident-events`, keyed
+by service so one service's events stay in order on one partition. The backend
+listener (consumer group `incident-processor`, three threads) validates each
+event and inserts it into PostgreSQL with `ON CONFLICT DO NOTHING`, so a
+redelivery is harmless. It then applies the event to Redis in one Lua script
+guarded by `processed:{eventId}`, pushes a `CREATED` message over the WebSocket,
+and only then acknowledges the Kafka offset. Invalid records go straight to the
+dead-letter topic; transient failures are retried with backoff first
+([details](#retries-and-the-dead-letter-topic)).
+
+**Status-change path.** `PUT /api/events/{eventId}/status` runs in a PostgreSQL
+transaction with optimistic locking, then updates the Redis counters in one Lua
+script and pushes an `UPDATED` message.
+
+**Read path.** The events list and detail always come from PostgreSQL. The
+dashboard endpoints read the Redis live state (with a 5-second summary cache) and
+fall back to PostgreSQL aggregates when Redis is unavailable
+([Redis resilience](#redis-resilience)). The browser loads state over REST and
+then stays current from the WebSocket ([Frontend](#frontend)).
+
+## Design notes
+
+**Kafka layout.** One topic, `incident-events`, with 3 partitions and 24-hour
+retention; the producer declares it, and the backend declares
+`incident-events.DLT` (3 partitions, 7 days). The message key is the service
+name, so all events of one service go to one partition and are consumed in
+order. Ordering across services is not guaranteed and nothing depends on it.
+Three partitions match the three listener threads of the consumer group
+`incident-processor` (`concurrency: 3` in `backend/src/main/resources/application.yml`),
+so each thread owns one partition. Adding backend instances beyond three would
+leave the extra ones idle unless the partition count grows.
+
+**Delivery guarantee.** The listener uses `ack-mode: manual_immediate` and
+acknowledges an offset only after the PostgreSQL insert and the Redis update
+have both succeeded (`IncidentEventListener`), so a crash replays the record
+instead of losing it. Replays are safe because `event_id` is unique in
+PostgreSQL (`ON CONFLICT DO NOTHING`) and the Redis script applies each
+`eventId` once (`processed:{eventId}`). The result is at-least-once delivery
+with idempotent effects, not exactly-once. A new consumer group starts at the
+earliest retained offset (`auto-offset-reset: earliest`). Failures are retried
+with back-off and then dead-lettered
+([details](#retries-and-the-dead-letter-topic)).
+
+**PostgreSQL is the source of truth; Redis is derived state.** Every event is
+stored in PostgreSQL first. Redis only holds counters, per-service state, the
+last two hours of timeline buckets and the 50 latest events
+([key table](#live-service-state-redis)), all of which can be recomputed from
+the `events` table. That is why Redis can fail without losing data: reads fall
+back to PostgreSQL, ingestion keeps going, and the reconciler rebuilds Redis
+afterwards ([Redis resilience](#redis-resilience)). The events list, event detail
+and status changes never depend on Redis being up.
+
+**Why each Redis piece exists.** The dashboard needs a few numbers many times a
+second, so they are precomputed rather than aggregated on every request. One Lua
+script updates all keys for an event atomically, which removes the race between
+concurrent listener threads and the status endpoint without distributed locks.
+A 5-second summary cache plus a version counter keeps repeated dashboard reads
+cheap without serving a summary that predates a status change.
+
+## Performance notes
+
+These are single observations from one development machine, not a benchmark.
+They show that the pipeline is comfortably faster than the producer's default
+rate (one event every 2 seconds); they do not describe production capacity.
+
+- **Machine:** Windows 10 Home, Docker Desktop with the whole stack in
+  containers, 8 logical CPUs and about 4 GB of memory available to Docker.
+- **State:** stack up and idle apart from the producer's default trickle (one
+  event every 2 seconds); PostgreSQL already held tens of thousands of events.
+- **Command:** send 10 bursts of 1000 events (about 2% invalid and 5% duplicates,
+  the producer defaults), then wait until the backend counters show them all
+  handled.
+
+```bash
+BACKEND=${BACKEND:-http://localhost:8080}   # set BACKEND_PORT's value here if you changed it
+handled() { curl -s "$BACKEND/actuator/prometheus" \
+  | grep -E '^ingestion_events_total\{.*outcome="(processed|invalid)"' | awk '{s+=$NF} END{print int(s)}'; }
+before=$(handled); SECONDS=0
+for i in $(seq 10); do curl -s -X POST "http://localhost:8082/produce?count=1000" > /dev/null; done
+until [ $(( $(handled) - before )) -ge 10000 ]; do sleep 1; done
+echo "10000 events handled in ${SECONDS}s"
+```
+
+- **Observed:** four runs of 10,000 events took about 41, 48, 51 and 62 seconds
+  from the first request to the last event handled, that is roughly 160 to 240
+  events per second end to end. Publishing the 10,000 events to Kafka took 5 to
+  11 seconds of that (the producer waits for Kafka to confirm each batch), so the
+  backend consumer, not the producer, is the limiting side. `processed` includes
+  duplicates that were skipped; `invalid` events are also counted as `dlt`, so
+  the command adds only the first two.
+- **Not measured:** API latency under load, WebSocket fan-out to many browsers,
+  behaviour with more than one backend instance, memory use, and any comparison
+  with other machines or settings. The consumer is likely limited by the
+  per-event PostgreSQL insert plus Redis script round trips on three threads,
+  but that was not profiled.
+
+## Testing
+
+| Module | Command (repository root unless noted) | Notes |
+|---|---|---|
+| Producer | `mvn -B -pl producer -am verify` | JUnit 5, Mockito, `@WebMvcTest` |
+| Backend | `mvn -B -pl backend -am verify` | Testcontainers start Kafka, PostgreSQL and Redis, so Docker must be running; includes `EndToEndIntegrationTest` |
+| Frontend | `npm test` in `frontend/` | Vitest + React Testing Library; `npm run lint` and `npm run build` are the other checks |
+
+`mvn -B verify` from the root runs both Java modules and writes a JaCoCo report
+per module at `backend/target/site/jacoco/index.html` and
+`producer/target/site/jacoco/index.html`. The same commands run in
+[CI](#continuous-integration). Details: [Event ingestion](#event-ingestion-backend)
+(backend and end-to-end tests) and [Frontend](#frontend).
+
 ## Continuous integration
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every pull request
@@ -83,6 +258,8 @@ runnable locally with the same commands:
 - `backend/` - Spring Boot service that consumes events from Kafka, stores them in PostgreSQL, keeps live state in Redis and serves the REST API
 - `pom.xml` - Maven parent for the Java modules
 - `docker-compose.yml` - local stack
+- `docs/` - [REST, WebSocket and operational API reference](docs/api.md) and the screenshots used in this README
+- `.github/workflows/ci.yml` - [CI pipeline](#continuous-integration)
 
 ## Local infrastructure
 
@@ -231,9 +408,9 @@ Known limitations:
   window is not in the dashboard. It is kept in the DLT, and because ingestion
   is idempotent it can be republished to `incident-events` safely. There is no
   replay tool yet.
-- Until Redis resilience (feature 14), a Redis outage longer than the retry
-  window can leave an event stored in PostgreSQL but sent to the DLT, so the
-  Redis counters miss it until they are rebuilt.
+- A Redis outage no longer sends events to the DLT: the event is stored in
+  PostgreSQL, the Redis update is skipped, and the live state is rebuilt from
+  PostgreSQL when Redis returns (see [Redis resilience](#redis-resilience)).
 
 Inspect stored events:
 
@@ -301,7 +478,7 @@ counted once.
 |---|---|---|
 | `events:count` | String | all events |
 | `severity:{SEV}:count` | String | all events per severity |
-| `status:{STATUS}:count` | String | events per initial status |
+| `status:{STATUS}:count` | String | events per current status (moved by [status changes](#incident-status-update)) |
 | `active:{SEV}:count` | String | active (`OPEN` or `ACKNOWLEDGED`) events per severity |
 | `services` | Set | known service names |
 | `service:{name}` | Hash | `active:INFO`/`WARNING`/`MAJOR`/`CRITICAL`, `openCount`, `activeCount`, `status`, `lastEventTime`, `latestSeverity` |
@@ -317,9 +494,9 @@ any active `CRITICAL` makes it `DOWN`, otherwise any active `MAJOR` or
 `latestSeverity` follow the newest event `timestamp`, not arrival order.
 Events older than the 2-hour timeline window do not create a timeline bucket.
 
-Events stored before Redis state existed (for example from an older run of the
-stack) are not in Redis yet; a later feature rebuilds Redis from PostgreSQL.
-Until then, start from a clean slate with `docker compose down -v`.
+If Redis is empty or has fallen behind PostgreSQL (for example after a wipe or
+an outage), the backend rebuilds it from the stored events; see
+[Redis resilience](#redis-resilience).
 
 Inspect the live state:
 
@@ -334,6 +511,8 @@ docker compose exec redis redis-cli LRANGE recent:events 0 9
 
 The backend serves stored events from PostgreSQL. Interactive docs are at
 http://localhost:8080/swagger-ui/index.html (OpenAPI JSON at `/v3/api-docs`).
+The full request and response reference, with `curl` examples for every REST,
+WebSocket and operational endpoint, is in [docs/api.md](docs/api.md).
 
 | Method | Path | Returns |
 |---|---|---|
@@ -433,15 +612,15 @@ service's `active:{SEV}`, `openCount`, `activeCount` and health. Event totals,
 the timeline, the recent list and `lastEventTime` are not touched, because a
 status change is not a new event.
 
-Known limitations until the reconciler (feature 14) lands:
+If Redis is unavailable after the commit, the request still succeeds, the
+backend logs a warning, and it flags the live state for a rebuild from
+PostgreSQL (see [Redis resilience](#redis-resilience)).
 
-- If Redis is unavailable after the commit, the request still succeeds and
-  the backend logs a warning. Redis stays stale for that event until it is
-  rebuilt.
-- A status change to an event that ingestion has stored but not yet applied
-  to Redis can leave that event's counts stale. This happens when it is the
-  service's first event in Redis, or while ingestion is retrying after a Redis
-  outage. Normally the window is milliseconds.
+Known limitation: if the event's service has no live state in Redis yet (its
+first event has not been applied, or Redis was wiped), the Lua script returns
+0. The status change is committed to PostgreSQL and pushed, but the Redis
+update is skipped with a WARN log and no rebuild is flagged, so Redis counts
+stay stale until the next rebuild. Normally the window is milliseconds.
 
 ## Dashboard data APIs
 
@@ -499,8 +678,8 @@ expires. An
 out-of-range or non-numeric `minutes` or `limit` returns 400 naming the
 parameter.
 
-Known limitation until Redis resilience (feature 14): if Redis is unavailable,
-these endpoints return 500 instead of falling back to PostgreSQL.
+If Redis is unavailable, these endpoints answer from PostgreSQL aggregates
+instead, with the same response shapes (see [Redis resilience](#redis-resilience)).
 
 ## Real-time push
 
@@ -533,6 +712,102 @@ curl -i -N -H "Connection: Upgrade" -H "Upgrade: websocket"   -H "Sec-WebSocket-
 
 It answers `101 Switching Protocols`; with another `Origin` it answers `403`.
 
+## Redis resilience
+
+PostgreSQL is the source of truth; Redis only holds derived live state (counters,
+service health, timeline, recent list, summary cache). A Redis outage therefore
+degrades speed, not correctness.
+
+**Circuit breaker.** One Resilience4j breaker named `redis` wraps every Redis
+call the backend makes: the two Lua applies (`apply-event`,
+`apply-status-change`) and all dashboard reads. Its settings are in
+`backend/src/main/resources/application.yml`:
+
+| Setting | Value |
+|---|---|
+| Redis command timeout | 500 ms (fail fast instead of the 60 s client default) |
+| Window | last 10 calls, evaluated from the 5th call |
+| Opens at | 50 % failures (only `DataAccessException` counts) |
+| Open for | 5 s, then half-open automatically and allows 2 probe calls |
+
+**Writes never fail because of Redis.** Ingestion and status changes commit to
+PostgreSQL first. If the Redis update then fails (or the breaker is open), the
+backend logs a WARN, still pushes the change over the WebSocket, and sets an
+in-memory *reconcile-needed* flag. The Kafka consumer keeps acknowledging events,
+so nothing goes to the DLT because of Redis.
+
+**Reads fall back to PostgreSQL.** While Redis is unavailable, `summary`,
+`services`, `timeline` and `recent-events` are computed from PostgreSQL
+aggregates with the same response shapes, so the dashboard keeps working (slower
+on large tables). Each fallback logs one WARN line without a stack trace; the
+stack trace is at DEBUG.
+
+**Reconciler.** `LiveStateReconciler` rebuilds Redis from PostgreSQL:
+
+- at startup, when the `services` key is missing (empty Redis);
+- when the breaker closes again while the flag is set;
+- every 30 s while the flag is set and the breaker is closed (a safety net for
+  outages too short to trip the breaker, or a rebuild that itself failed).
+
+A rebuild pauses the Kafka listener and blocks status changes, computes the whole
+snapshot from PostgreSQL, and writes absolute values in a single `MULTI/EXEC`
+batch, so readers never see a half-built state. It then clears the summary
+cache, clears the flag, resumes the listener and logs `Live state reconciled
+from Postgres`. The rebuild does not replay events through the Lua scripts,
+because their `processed:{eventId}` guard would skip events whose Redis state is
+stale. It restores counters, service state, the last two hours of timeline
+buckets and the 50 most recent events, but not the `processed:{eventId}` guards
+(see [Known limitations](#known-limitations)).
+
+Try it with the stack running (in Git Bash, prefix `docker compose exec` with
+`MSYS_NO_PATHCONV=1` if needed):
+
+```bash
+docker compose stop redis
+curl -s http://localhost:3000/api/dashboard/summary    # still 200, served from PostgreSQL
+curl -s -X PUT http://localhost:3000/api/events/<eventId>/status   -H "Content-Type: application/json" -d '{"status":"ACKNOWLEDGED"}'    # still 200
+docker compose logs backend | grep -E "Redis unavailable|Live state"
+docker compose start redis
+# within about a minute the log shows: Live state reconciled from Postgres
+```
+
+While Redis is down, `resilience4j_circuitbreaker_state{name="redis",state="open"}`
+on `/actuator/prometheus` is `1.0`. After Redis is back the breaker goes
+half-open and closes once two probe calls succeed, which ordinary dashboard
+traffic or an ingested event supplies; the rebuild runs when it closes.
+
+## Observability
+
+- **Logs.** The backend writes one JSON object per line to stdout
+  (`logstash-logback-encoder`, configured in
+  `backend/src/main/resources/logback-spring.xml`), with `@timestamp`, `level`,
+  `logger_name`, `thread_name`, `message` and `stack_trace` when present. While an
+  event is being ingested, skipped, retried or status-changed, its ID is in the
+  logging context, so those lines also carry an `eventId` field. Follow one event:
+  `docker compose logs backend | grep '"eventId":"EVT-..."'`.
+- **Health.** `GET /actuator/health` on the backend (`:8080`) and the producer
+  (`:8082`) returns `{"status":"UP"}`. Compose healthchecks use it. Details are
+  not exposed.
+- **Metrics.** `GET http://localhost:8080/actuator/prometheus` (the only
+  exposed endpoints on the backend are `health` and `prometheus`):
+
+| Metric | Meaning |
+|---|---|
+| `ingestion_events_total{outcome="processed"}` | valid events handled, including redelivered duplicates that were skipped as already stored |
+| `ingestion_events_total{outcome="invalid"}` | records rejected as malformed or failing validation |
+| `ingestion_events_total{outcome="dlt"}` | records published to `incident-events.DLT` (every invalid record, plus valid ones whose retries ran out) |
+| `resilience4j_circuitbreaker_state{name="redis",state=...}` | `1.0` on the current breaker state (`closed`, `open`, `half_open`) |
+| `resilience4j_circuitbreaker_calls_seconds_count{name="redis",kind=...}` | Redis calls by outcome (`successful`, `failed`) |
+| `resilience4j_circuitbreaker_not_permitted_calls_total{name="redis"}` | calls rejected while the breaker was open |
+
+The standard JVM, HTTP server, Kafka consumer and Hikari pool metrics from
+Micrometer are on the same endpoint. There is no Prometheus or Grafana container
+in the stack; the endpoint is there to be scraped.
+
+```bash
+curl -s http://localhost:8080/actuator/prometheus | grep -E "^(ingestion_events_total|resilience4j_circuitbreaker_state)"
+```
+
 ## Frontend
 
 The dashboard is a React + TypeScript + Vite app (React Router, TanStack
@@ -549,12 +824,23 @@ be reloaded or linked directly.
 | `/events/:eventId` | the events page with that event's detail drawer open |
 | `/services` | per-service health, open and active incident counts, latest severity, last event |
 
-The dashboard polls the dashboard APIs every 5 seconds (the summary cache
-lifetime); polling pauses while the browser tab is hidden. If the backend is
-unreachable, each section keeps its last data or shows its error state, and a
-single "Can't reach the backend - retrying" message appears on the first failed
-request (within a few seconds) and stays open until the API answers again. The top bar has a Light / Dark / System theme switch; the
-choice is remembered in the browser.
+The app keeps one STOMP connection to `/ws` for its lifetime (see
+[Real-time push](#real-time-push)). Pushed events and summaries patch the
+TanStack Query cache directly, and the data a push cannot patch exactly (event
+lists, timeline, services) is refetched at most once a second. A chip in the
+top bar shows the connection: Connecting, Live, Reconnecting, or Offline once
+the socket has been down for 10 seconds. The client reconnects on its own with
+exponential backoff (1 s up to 30 s) and refetches over REST after every
+(re)connect, because nothing is replayed.
+
+Polling every 5 seconds (the summary cache lifetime) is only a fallback: it runs
+while the connection is not Live and pauses while the browser tab is hidden. A
+row that was just created or updated, including by another operator, is
+highlighted for 3 seconds. If the backend is unreachable, each section keeps its
+last data or shows its error state, and a single "Can't reach the backend -
+retrying" message appears on the first failed request (within a few seconds) and
+stays open until the API answers again. The top bar has a Light / Dark / System
+theme switch; the choice is remembered in the browser.
 
 The events page keeps its state in the URL, so any view can be reloaded,
 bookmarked or shared: severity, status, source and service filters, the search
@@ -567,12 +853,14 @@ filtered table, and an unknown ID shows "Event not found". The drawer offers
 only the status changes the lifecycle allows (Acknowledge, Resolve, Reopen).
 The new status shows at once; if the backend rejects the change (for example a
 409 for an invalid transition or an overlapping update) it rolls back and the
-reason appears in an error message. The table and drawer poll every 5 seconds
-like the dashboard, pausing while a status change is in flight.
+reason appears in an error message. While the connection is not Live, the table
+and drawer poll every 5 seconds like the dashboard, pausing while a status
+change is in flight.
 
 The services page lists every service that has reported, sorted by name, with
 its health, open incidents (the main column), active incidents (open or
-acknowledged), latest severity and last event time, refreshed every 5 seconds.
+acknowledged), latest severity and last event time. It is kept current by the
+live connection, or by 5-second polling while the connection is down.
 Each service name opens the events page filtered to that service. Before any
 event arrives it says so instead of showing an empty table.
 
@@ -587,3 +875,62 @@ npm test        # Vitest + React Testing Library
 npm run lint
 npm run build   # typecheck + production bundle
 ```
+
+## Known limitations
+
+What this project deliberately does not solve, with links to the detail.
+
+**Data and delivery**
+
+- **No exactly-once processing.** Delivery is at-least-once with idempotent
+  effects ([Design notes](#design-notes)). The Redis rebuild restores counters,
+  service state, timeline and the recent list but not the `processed:{eventId}`
+  guards ([Redis resilience](#redis-resilience)). If an offset reset makes the
+  backend re-consume an event that is stored in PostgreSQL within the 24-hour
+  window, Redis counts it a second time until the next rebuild.
+- **No dead-letter replay tool.** A valid event dead-lettered because an outage
+  outlasted the retry window is kept in `incident-events.DLT` but is not on the
+  dashboard until someone republishes it
+  ([Retries and the dead-letter topic](#retries-and-the-dead-letter-topic)).
+- **The reconcile-needed flag is in memory.** A backend restart forgets that a
+  rebuild was pending. The startup rebuild only runs when the Redis `services`
+  key is missing, so Redis that fell behind and survived the restart stays stale
+  until the next flagged failure or a wipe. Likewise, if Redis loses its data
+  while no Redis write fails (reads alone do not flag a rebuild), the dashboard
+  keeps serving understated totals. Compose runs Redis with append-only
+  persistence on a named volume, so a plain restart does not lose data.
+- **A status change can skip Redis without flagging a rebuild** when the event's
+  service has no live state yet; the counters stay stale until the next rebuild
+  ([Incident status update](#incident-status-update)).
+- **Event search is not indexed for text.** `q` is a case-insensitive
+  substring match, and every list request also counts the matching rows. Text
+  search cannot use an index, so it slows down as the table grows. Single
+  `curl` observations here with about 100,000 stored events: a `q` search took about
+  0.4 to 1.7 s and a plain page 0.2 to 0.3 s; nothing was tuned or profiled.
+- **The rebuilt timeline covers about two hours**, the same window as the
+  `timeline:*` buckets and the `minutes` limit of the timeline endpoint.
+
+**Real-time behaviour**
+
+- **WebSocket delivery is best effort.** Nothing is sent on subscribe or
+  replayed after a reconnect, and events from different partitions can arrive
+  out of order (a `CREATED` push can even arrive after an `UPDATED` push for the
+  same event, in a window of milliseconds); the dashboard reloads state over REST
+  when it reconnects
+  ([Real-time push](#real-time-push)).
+- **One backend instance.** The STOMP broker is Spring's in-memory simple
+  broker, so pushes are not shared between instances, and the reconcile flag and
+  the summary throttle are per-process. Kafka, PostgreSQL and Redis are single
+  nodes in Compose.
+
+**Scope**
+
+- **No authentication or authorization.** Every endpoint is open; this is a
+  local single-machine demo, not a hardened deployment. The database
+  credentials are local development defaults
+  ([Configuration and credentials](#configuration-and-credentials)).
+- **Not built:** user login, distributed tracing, continuous deployment and
+  Kubernetes manifests. CI runs tests and builds only
+  ([Continuous integration](#continuous-integration)).
+- **Performance figures are single local observations**, not benchmarks
+  ([Performance notes](#performance-notes)).
