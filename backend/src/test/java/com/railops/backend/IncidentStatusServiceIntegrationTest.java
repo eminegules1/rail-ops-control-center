@@ -10,6 +10,11 @@ import static org.mockito.Mockito.when;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -32,7 +37,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-@Import(IncidentStatusService.class)
+@Import({IncidentStatusService.class, ReconcileState.class, LiveStateLock.class})
 @Testcontainers
 class IncidentStatusServiceIntegrationTest {
 
@@ -48,6 +53,12 @@ class IncidentStatusServiceIntegrationTest {
     @Autowired
     private IncidentStatusService service;
 
+    @Autowired
+    private ReconcileState reconcileState;
+
+    @Autowired
+    private LiveStateLock liveStateLock;
+
     @MockitoBean
     private LiveStateUpdater liveState;
 
@@ -57,6 +68,7 @@ class IncidentStatusServiceIntegrationTest {
     @BeforeEach
     void reset() {
         repository.deleteAll();
+        reconcileState.clear();
     }
 
     @ParameterizedTest
@@ -96,7 +108,7 @@ class IncidentStatusServiceIntegrationTest {
     }
 
     @Test
-    void redisFailureAfterCommitStillReturnsTheChange() {
+    void redisFailureAfterCommitStillReturnsTheChangeAndMarksReconcileNeeded() {
         insert(EventStatus.OPEN);
         when(liveState.applyStatusChange(any(), any(), any(), any()))
                 .thenThrow(new RedisConnectionFailureException("Redis is down"));
@@ -106,6 +118,51 @@ class IncidentStatusServiceIntegrationTest {
         assertThat(response.status()).isEqualTo(EventStatus.RESOLVED);
         assertThat(stored().getStatus()).isEqualTo(EventStatus.RESOLVED);
         verify(liveUpdates).eventUpdated(response);
+        assertThat(reconcileState.isNeeded()).isTrue();
+    }
+
+    // Feature 14 Step 4: proves the guarantee LiveStateReconciler's rebuild depends on. A rebuild holds the write
+    // lock for its whole snapshot-then-write; this simulates that by holding it directly, without needing a real
+    // Redis outage to force the timing.
+    @Test
+    void changeStatusWaitsForAConcurrentRebuildToReleaseTheWriteLockThenAppliesAfterIt() throws Exception {
+        insert(EventStatus.OPEN);
+        CountDownLatch rebuildHoldsTheLock = new CountDownLatch(1);
+        CountDownLatch releaseTheRebuild = new CountDownLatch(1);
+        Thread rebuild = new Thread(() -> {
+            liveStateLock.forRebuild().lock();
+            try {
+                rebuildHoldsTheLock.countDown();
+                releaseTheRebuild.await();
+            } catch (InterruptedException ignored) {
+                // Test teardown only; the assertions below already ran.
+            } finally {
+                liveStateLock.forRebuild().unlock();
+            }
+        });
+        rebuild.start();
+        assertThat(rebuildHoldsTheLock.await(2, TimeUnit.SECONDS)).isTrue();
+
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<EventResponse> statusChange = executor.submit(() -> service.changeStatus(ID, EventStatus.RESOLVED));
+
+            // While the rebuild holds the write lock, the status change must not have committed yet.
+            Thread.sleep(300);
+            assertThat(statusChange.isDone()).isFalse();
+            assertThat(stored().getStatus()).isEqualTo(EventStatus.OPEN);
+
+            releaseTheRebuild.countDown();
+            rebuild.join(2000);
+
+            EventResponse response = statusChange.get(2, TimeUnit.SECONDS);
+            assertThat(response.status()).isEqualTo(EventStatus.RESOLVED);
+            assertThat(stored().getStatus()).isEqualTo(EventStatus.RESOLVED);
+            verify(liveState).applyStatusChange("signal-service", Severity.CRITICAL, EventStatus.OPEN,
+                    EventStatus.RESOLVED);
+        } finally {
+            executor.shutdownNow();
+        }
     }
 
     @Test

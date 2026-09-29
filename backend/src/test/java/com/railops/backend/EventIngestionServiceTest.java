@@ -14,6 +14,11 @@ import jakarta.validation.Validation;
 import jakarta.validation.ValidatorFactory;
 import java.time.Instant;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,13 +29,16 @@ class EventIngestionServiceTest {
     private final IncidentEventRepository repository = mock(IncidentEventRepository.class);
     private final LiveStateUpdater liveState = mock(LiveStateUpdater.class);
     private final LiveUpdatePublisher liveUpdates = mock(LiveUpdatePublisher.class);
+    private final ReconcileState reconcileState = new ReconcileState();
+    private final LiveStateLock liveStateLock = new LiveStateLock();
     private ValidatorFactory factory;
     private EventIngestionService service;
 
     @BeforeEach
     void setUp() {
         factory = Validation.buildDefaultValidatorFactory();
-        service = new EventIngestionService(repository, factory.getValidator(), liveState, liveUpdates);
+        service = new EventIngestionService(repository, factory.getValidator(), liveState, liveUpdates,
+                reconcileState, liveStateLock);
     }
 
     @AfterEach
@@ -74,7 +82,7 @@ class EventIngestionServiceTest {
     }
 
     @Test
-    void propagatesRedisFailureSoTheRecordIsRetried() {
+    void survivesRedisFailureStoresPushesAndMarksReconcileNeeded() {
         IncidentEventMessage event = IncidentEventMessageValidationTest.valid();
         IncidentEvent stored = storedRow(event.eventId(), event.timestamp());
         when(repository.insertIfAbsent(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(),
@@ -83,8 +91,72 @@ class EventIngestionServiceTest {
         when(liveState.applyEvent(any(), any(), any(), any(), any()))
                 .thenThrow(new RedisConnectionFailureException("down"));
 
-        assertThatThrownBy(() -> service.ingest(event)).isInstanceOf(RedisConnectionFailureException.class);
+        assertThat(service.ingest(event)).isEqualTo(IngestionResult.STORED);
+        verify(liveUpdates).eventCreated(EventResponse.from(stored));
+        assertThat(reconcileState.isNeeded()).isTrue();
+    }
+
+    // The redelivery's own applyEvent call also fails (Redis is still down), so only the Postgres insert result
+    // tells it whether this event was already pushed once.
+    @Test
+    void doesNotPushDuplicateDeliveredDuringTheSameOutage() {
+        IncidentEventMessage event = IncidentEventMessageValidationTest.valid();
+        IncidentEvent stored = storedRow(event.eventId(), event.timestamp());
+        when(repository.insertIfAbsent(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(),
+                any(Instant.class))).thenReturn(0);
+        when(repository.findByEventId(event.eventId())).thenReturn(Optional.of(stored));
+        when(liveState.applyEvent(any(), any(), any(), any(), any()))
+                .thenThrow(new RedisConnectionFailureException("down"));
+
+        assertThat(service.ingest(event)).isEqualTo(IngestionResult.DUPLICATE);
         verifyNoInteractions(liveUpdates);
+        assertThat(reconcileState.isNeeded()).isTrue();
+    }
+
+    // F-06: pausing the Kafka listener before a rebuild only requests a pause; it does not wait for a record
+    // already being processed. This proves the lock is what actually excludes an in-flight ingestion, not the pause.
+    @Test
+    void ingestWaitsForAConcurrentRebuildToReleaseTheWriteLockThenAppliesAfterIt() throws Exception {
+        IncidentEventMessage event = IncidentEventMessageValidationTest.valid();
+        IncidentEvent stored = storedRow(event.eventId(), event.timestamp());
+        when(repository.insertIfAbsent(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(),
+                any(Instant.class))).thenReturn(1);
+        when(repository.findByEventId(event.eventId())).thenReturn(Optional.of(stored));
+        when(liveState.applyEvent(any(), any(), any(), any(), any())).thenReturn(true);
+
+        CountDownLatch rebuildHoldsTheLock = new CountDownLatch(1);
+        CountDownLatch releaseTheRebuild = new CountDownLatch(1);
+        Thread rebuild = new Thread(() -> {
+            liveStateLock.forRebuild().lock();
+            try {
+                rebuildHoldsTheLock.countDown();
+                releaseTheRebuild.await();
+            } catch (InterruptedException ignored) {
+                // Test teardown only; the assertions below already ran.
+            } finally {
+                liveStateLock.forRebuild().unlock();
+            }
+        });
+        rebuild.start();
+        assertThat(rebuildHoldsTheLock.await(2, TimeUnit.SECONDS)).isTrue();
+
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<IngestionResult> ingestion = executor.submit(() -> service.ingest(event));
+
+            // While the rebuild holds the write lock, ingestion must not have run yet.
+            Thread.sleep(300);
+            assertThat(ingestion.isDone()).isFalse();
+            verifyNoInteractions(liveUpdates);
+
+            releaseTheRebuild.countDown();
+            rebuild.join(2000);
+
+            assertThat(ingestion.get(2, TimeUnit.SECONDS)).isEqualTo(IngestionResult.STORED);
+            verify(liveUpdates).eventCreated(EventResponse.from(stored));
+        } finally {
+            executor.shutdownNow();
+        }
     }
 
     @Test

@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
@@ -40,7 +41,8 @@ class DashboardQueryServiceIntegrationTest {
     private static LiveStateUpdater updater;
 
     private final IncidentEventRepository repository = mock(IncidentEventRepository.class);
-    private final DashboardQueryService dashboard = new DashboardQueryService(redis, repository, JSON);
+    private final DashboardQueryService dashboard =
+            new DashboardQueryService(redis, repository, JSON, CircuitBreaker.ofDefaults("test"));
 
     @BeforeAll
     static void connect() {
@@ -48,7 +50,7 @@ class DashboardQueryServiceIntegrationTest {
         connectionFactory.afterPropertiesSet();
         connectionFactory.start();
         redis = new StringRedisTemplate(connectionFactory);
-        updater = new LiveStateUpdater(redis);
+        updater = new LiveStateUpdater(redis, CircuitBreaker.ofDefaults("test"));
     }
 
     @AfterAll

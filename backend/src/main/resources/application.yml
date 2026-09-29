@@ -15,8 +15,9 @@ spring:
       # Host-run default; the compose service sets SPRING_DATA_REDIS_HOST.
       host: localhost
       port: ${REDIS_PORT:6379}
-      # Fail fast while Redis is down (Lettuce default 60s), like the Hikari timeout above.
-      timeout: 2s
+      # Fail fast while Redis is down (Lettuce default 60s), like the Hikari timeout above. Short enough that the
+      # "redis" circuit breaker's sliding window fills, and each half-open probe fails, within about a second.
+      timeout: 500ms
   jackson:
     deserialization:
       # {"status":1} is a 400, not ACKNOWLEDGED by enum position.
@@ -57,6 +58,20 @@ ingestion:
     multiplier: 2.0
     max-interval: 30s
     max-retries: 8
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      redis:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 5s
+        permitted-number-of-calls-in-half-open-state: 2
+        automatic-transition-from-open-to-half-open-enabled: true
+        record-exceptions:
+          - org.springframework.dao.DataAccessException
 
 logging:
   level:

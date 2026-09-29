@@ -1,5 +1,6 @@
 package com.railops.backend;
 
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -28,9 +29,11 @@ public class LiveStateUpdater {
             RedisScript.of(new ClassPathResource("redis/apply-status-change.lua"), Long.class);
 
     private final StringRedisTemplate redis;
+    private final CircuitBreaker circuitBreaker;
 
-    public LiveStateUpdater(StringRedisTemplate redis) {
+    public LiveStateUpdater(StringRedisTemplate redis, CircuitBreaker circuitBreaker) {
         this.redis = redis;
+        this.circuitBreaker = circuitBreaker;
     }
 
     /**
@@ -51,8 +54,9 @@ public class LiveStateUpdater {
                 "active:" + severity + ":count",
                 timelineKey(bucketStart),
                 "recent:events");
-        Long applied = redis.execute(APPLY_EVENT, keys, eventId, service, severity.name(), status.name(),
-                EVENT_TIME.format(timestamp), Long.toString(bucketStart.getEpochSecond()));
+        Long applied = circuitBreaker.executeSupplier(() -> redis.execute(APPLY_EVENT, keys, eventId, service,
+                severity.name(), status.name(), EVENT_TIME.format(timestamp),
+                Long.toString(bucketStart.getEpochSecond())));
         return applied != null && applied == 1;
     }
 
@@ -70,7 +74,8 @@ public class LiveStateUpdater {
                 "active:" + severity + ":count",
                 SUMMARY_CACHE_KEY,
                 SUMMARY_VERSION_KEY);
-        Long applied = redis.execute(APPLY_STATUS_CHANGE, keys, severity.name(), from.name(), to.name());
+        Long applied = circuitBreaker.executeSupplier(
+                () -> redis.execute(APPLY_STATUS_CHANGE, keys, severity.name(), from.name(), to.name()));
         return applied != null && applied == 1;
     }
 

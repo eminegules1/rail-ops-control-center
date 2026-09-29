@@ -1,7 +1,13 @@
 package com.railops.backend;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.awaitility.Awaitility.await;
 
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -12,6 +18,9 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessException;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
+import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.testcontainers.containers.GenericContainer;
@@ -37,7 +46,7 @@ class LiveStateUpdaterIntegrationTest {
         connectionFactory.afterPropertiesSet();
         connectionFactory.start();
         redis = new StringRedisTemplate(connectionFactory);
-        updater = new LiveStateUpdater(redis);
+        updater = new LiveStateUpdater(redis, CircuitBreaker.ofDefaults("test"));
     }
 
     @AfterAll
@@ -288,6 +297,52 @@ class LiveStateUpdaterIntegrationTest {
                 .isFalse();
 
         assertThat(redis.keys("*")).isEmpty();
+    }
+
+    @Test
+    void circuitOpensAfterRepeatedFailuresThenClosesOnceRedisRecovers() throws Exception {
+        CircuitBreakerConfig config = CircuitBreakerConfig.custom()
+                .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
+                .slidingWindowSize(4)
+                .minimumNumberOfCalls(4)
+                .failureRateThreshold(50)
+                .waitDurationInOpenState(Duration.ofMillis(200))
+                .permittedNumberOfCallsInHalfOpenState(1)
+                .automaticTransitionFromOpenToHalfOpenEnabled(true)
+                .recordExceptions(DataAccessException.class)
+                .build();
+        CircuitBreaker breaker = CircuitBreaker.of("outage-test", config);
+
+        LettuceClientConfiguration shortTimeout = LettuceClientConfiguration.builder()
+                .commandTimeout(Duration.ofMillis(200))
+                .build();
+        LettuceConnectionFactory brokenFactory =
+                new LettuceConnectionFactory(new RedisStandaloneConfiguration("localhost", 1), shortTimeout);
+        brokenFactory.afterPropertiesSet();
+        brokenFactory.start();
+        LiveStateUpdater brokenUpdater = new LiveStateUpdater(new StringRedisTemplate(brokenFactory), breaker);
+
+        try {
+            for (int i = 0; i < 4; i++) {
+                String eventId = "EVT-FAIL-" + i;
+                assertThatThrownBy(() -> brokenUpdater.applyEvent(eventId, SERVICE, Severity.INFO, EventStatus.OPEN,
+                        Instant.now())).isInstanceOf(DataAccessException.class);
+            }
+            assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+
+            assertThatThrownBy(() -> brokenUpdater.applyEvent("EVT-REJECTED", SERVICE, Severity.INFO,
+                    EventStatus.OPEN, Instant.now())).isInstanceOf(CallNotPermittedException.class);
+        } finally {
+            brokenFactory.destroy();
+        }
+
+        // Same breaker, now pointed at the real container: once the wait duration elapses, a half-open probe
+        // succeeds and the breaker closes.
+        LiveStateUpdater recoveredUpdater = new LiveStateUpdater(redis, breaker);
+        await().ignoreExceptions().atMost(Duration.ofSeconds(2))
+                .untilAsserted(() -> assertThat(recoveredUpdater.applyEvent("EVT-RECOVERED", SERVICE, Severity.INFO,
+                        EventStatus.OPEN, Instant.now())).isTrue());
+        assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
     }
 
     private static String counter(String key) {
