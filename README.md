@@ -64,6 +64,18 @@ docker compose down -v        # stop and DELETE all data (Kafka, Redis, Postgres
 - **Git Bash on Windows rewrites paths in `docker compose exec` commands:**
   prefix the command with `MSYS_NO_PATHCONV=1`.
 
+## Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every pull request
+and on every push to `main` or `master`. It has three independent jobs, each
+runnable locally with the same commands:
+
+| Job | Where | Command |
+|---|---|---|
+| Backend and producer | repository root (JDK 21, Docker running for Testcontainers) | `mvn -B verify` |
+| Frontend | `frontend/` (Node 24) | `npm ci`, `npm run lint`, `npm test`, `npm run build` |
+| Docker images | repository root | `docker compose build` |
+
 ## Repository layout
 
 - `frontend/` - React + TypeScript + Vite dashboard
