@@ -207,6 +207,23 @@ Desktop must be running:
 mvn -pl backend -am verify
 ```
 
+`EndToEndIntegrationTest` runs the whole pipeline against real Kafka, PostgreSQL
+and Redis containers, feeding it only through Kafka and the HTTP API and
+checking only HTTP responses, `/actuator/prometheus` and the dead-letter topic.
+It covers three flows: the happy path (events, status changes and duplicates
+reflected in the events, summary, services and recent-events endpoints), the
+dead-letter path (invalid records reach `incident-events.DLT` without blocking
+valid ones) and Redis down (the API keeps answering from Postgres, then
+converges once Redis returns). Run it alone with:
+
+```bash
+mvn -pl backend -am -Dtest=EndToEndIntegrationTest -Dsurefire.failIfNoSpecifiedTests=false verify
+```
+
+`verify` also writes a JaCoCo coverage report for each module. Open
+`backend/target/site/jacoco/index.html` (or `producer/target/site/jacoco/index.html`)
+in a browser after a run.
+
 To run it from an IDE against the compose stack, start the stack and run
 `BackendApplication`. It connects to `localhost:9092` and
 `localhost:5432/incidents` and Redis on `localhost:6379` by default.
