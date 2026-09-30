@@ -8,7 +8,12 @@ const listeners = new Set<() => void>()
 
 /** Marks an event as just changed; a later call for the same event restarts its highlight window. */
 export function markChanged(eventId: string): void {
-  changedAt.set(eventId, Date.now())
+  const now = Date.now()
+  // Expired marks are never read again, so drop them here to keep the map from growing all day.
+  for (const [id, markedAt] of changedAt) {
+    if (now - markedAt >= HIGHLIGHT_MS) changedAt.delete(id)
+  }
+  changedAt.set(eventId, now)
   listeners.forEach((listener) => listener())
 }
 

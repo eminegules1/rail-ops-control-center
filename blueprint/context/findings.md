@@ -9,7 +9,7 @@
 
 ### F-03 [P3] unverified - Event search and page counts scan the whole table as history grows
 
-**File:** backend/src/main/java/com/railops/backend/EventQueryService.java:262
+**File:** backend/src/main/java/com/railops/backend/EventQueryService.java:81
 **Found:** 2026-09-27 by /audit (scope: full; lens: performance)
 **Why it matters:** `q` becomes `lower(column) LIKE '%...%'` on message,
 service and event ID, which no B-tree index can serve. Every list request also
@@ -23,7 +23,7 @@ with a `pg_trgm` GIN index on `lower(message)` in a new Flyway migration, or by
 keeping the default time-window sort without an exact total.
 **Resolution:**
 
-### F-04 [P3] fixed - Cross-origin handshake rejection on /ws has no automated test
+### F-04 [P3] closed - Cross-origin handshake rejection on /ws has no automated test
 
 **File:** backend/src/main/java/com/railops/backend/WebSocketConfig.java:40
 **Found:** 2026-09-28 by /audit independent (scope: current; lens: tests, security)
@@ -38,6 +38,8 @@ test green. The only evidence is the manual curl check in step 4.
 handshake fails (403), and optionally once with `Origin: http://localhost:<port>`
 and assert it succeeds. No production change.
 **Resolution:** Fixed by fix `test-cross-origin-rejection-on-the-websocket-endpoint`. `LiveUpdatesIntegrationTest.refusesHandshakeFromAnotherOrigin` connects with `Origin: http://evil.example` and requires the handshake to fail with 403; `acceptsHandshakeFromTheServersOwnOrigin` connects with the server's own origin. Widening the endpoint to `setAllowedOriginPatterns("*")` makes the first test fail. Awaiting re-review.
+
+Closed 2026-09-30 by /audit (scope: full; all lenses). `WebSocketConfig.registerStompEndpoints` still uses the default same-origin check, both tests exist at `LiveUpdatesIntegrationTest.java:145-154`, and they passed in the full `mvn -B verify` run (289 backend tests, 0 failures).
 
 ### F-05 [P3] unverified - A CREATED push can arrive after an UPDATED push for the same event with a stale status
 
@@ -55,7 +57,7 @@ delivery best-effort and unordered.
 **Suggested fix:** No backend change needed now. In Feature 13, have the client
 ignore a push whose `event.updatedAt` is older than the cached row's, or treat
 CREATED for a known row as a no-op.
-**Resolution:**
+**Resolution:** Re-examined 2026-09-30 by /audit (scope: full; all lenses). Still unverified. The frontend now applies the suggested guard for in-place patches (`isFresh` in `frontend/src/lib/liveCache.ts:38`; `patchRecentEvents` ignores CREATED for a cached row). One gap remains: an UPDATED push for a row that is not in the recent-events cache is ignored, and a later stale CREATED then prepends the old status, which only a reconnect or polling corrects (`liveUpdates.tsx` refetches lists, services and timeline on a push, not recent events). The window is milliseconds, so it stays a lead.
 
 ### F-09 [P3] open - Spec-required test evidence for the reconciler and controller fallback is missing
 
@@ -82,6 +84,8 @@ The rest is unchanged: `DashboardControllerTest` is not in the
 a bounded round-trip count, and no test calls `buildSummary()` with a failing
 Redis.
 
+Re-examined 2026-09-30 by /audit (scope: full; all lenses). Still open, narrower. `DashboardQueryServiceFallbackIntegrationTest.fallbacksLogOneWarnLineWithoutAStackTrace` now calls `buildSummary()` with Redis failing, so that branch is covered. Still missing: no assertion that the Kafka listener is paused before and resumed after a rebuild, none on the bounded round-trip count (`LiveStateReconcilerIntegrationTest` only infers resume from a later ingest), and `DashboardControllerTest` has no test of the four endpoints returning 200 through the service fallback.
+
 ### F-10 [P3] open - ServiceHealth derivation is duplicated in two Java classes
 
 **File:** backend/src/main/java/com/railops/backend/LiveStateReconciler.java:223
@@ -96,7 +100,9 @@ if the rule changes.
 claude-opus-5-5) at 94754b5. Still open. The duplicate is now at
 `LiveStateReconciler.java:223` and `DashboardQueryService.java:275`.
 
-### F-11 [P3] open - Spec contract and reconciler comments still describe the pre-repair design
+Re-examined 2026-09-30 by /audit (scope: full; all lenses). Still open: `LiveStateReconciler.java:223` and `DashboardQueryService.java:281`.
+
+### F-11 [P3] fixed - Spec contract and reconciler comments still describe the pre-repair design
 
 **File:** blueprint/context/current-feature.md:264
 **Found:** 2026-09-29 by /audit independent (scope: current; lens: quality)
@@ -116,11 +122,13 @@ em dashes, which the coding standards' Writing section forbids in comments.
 revision needs a new review request). Update the two reconciler comments and
 the class doc to name the scheduled retry. Replace the em dashes with commas or
 parentheses. No behavior change, and no current requirement is lost.
-**Resolution:**
+**Resolution:** Re-examined 2026-09-30 by /audit (scope: full; all lenses). Still open, code part only. The spec paragraph is now archived at `blueprint/history/features/14-redis-resilience.md:264` and cannot be edited as live work; ignore that part. Remaining: the `LiveStateReconciler.java:29-31` class doc omits the 30 s retry, the comments at `:96` and `:114` still say the state-transition listener retries (only `retryIfStillNeeded` recovers those cases), and `IncidentStatusService.java:45` still has an em dash.
 
-### F-12 [P3] unverified - Redis data loss with no failed write is never flagged for reconciliation
+Fixed 2026-09-30 (code part; the archived Feature 14 spec text is left as history). `LiveStateReconciler` class doc now names the 30 s retry, the startup and rebuild-failure comments and log messages say the scheduled retry recovers them, and the em dash in `IncidentStatusService` is gone. Awaiting re-review.
 
-**File:** backend/src/main/java/com/railops/backend/IncidentStatusService.java:75
+### F-12 [P3] fixed - Redis data loss with no failed write is never flagged for reconciliation
+
+**File:** backend/src/main/java/com/railops/backend/IncidentStatusService.java:78
 **Found:** 2026-09-29 by /audit independent (scope: current; lens: quality)
 **Why it matters:** `applyStatusChange` returns `false` exactly when the
 service hash is missing. `apply-status-change.lua` documents this as "never
@@ -139,7 +147,9 @@ needs volume loss, a recreated container, or a lost AOF tail.
 `applyStatusChange` returns-false branch, since that is a direct signal of a
 wiped live state. Optionally, move the startup emptiness check inside
 `reconcile()`'s lock, or repeat it from `retryIfStillNeeded()`. Add one test.
-**Resolution:**
+**Resolution:** Re-examined 2026-09-30 by /audit (scope: full; all lenses). Still unverified. The branch is now at `IncidentStatusService.java:78-82` and still logs without `reconcileState.markNeeded()`; the dashboard read fallbacks still never mark the flag.
+
+Fixed 2026-09-30. `IncidentStatusService.changeStatus` now calls `reconcileState.markNeeded()` when `applyStatusChange` returns false; `missingLiveStateAfterCommitStillReturnsTheChangeAndMarksReconcileNeeded` covers it. The dashboard read fallbacks still do not mark the flag (not changed). Awaiting re-review.
 
 ### F-15 [P3] open - The 3.3 MB login video is still mounted, and so fetched, for reduced-motion visitors
 
@@ -159,7 +169,7 @@ when `useMediaQuery('(prefers-reduced-motion: no-preference)', { noSsr: true })`
 also matches, and keep the poster background otherwise. Add a test with the
 `matchMedia` stub that reduced motion renders no `video`. No current requirement
 is lost.
-**Resolution:**
+**Resolution:** Re-examined 2026-09-30 by /audit (scope: full; all lenses). Still open: `BrandPanel.tsx:43` hides the video with CSS only, and the `<video autoPlay>` is still mounted.
 
 ### F-16 [P3] open - The looping background video has no way to pause it
 
@@ -177,9 +187,9 @@ that calls `video.pause()` and `play()` (keeps the look), or stop the motion
 within 5 s (for example, play once without `loop` using a clip trimmed to under
 5 s). The toggle loses no current requirement; the second option changes the
 approved step-6 "looping" design and needs the user's decision.
-**Resolution:**
+**Resolution:** Re-examined 2026-09-30 by /audit (scope: full; all lenses). Still open: `BrandPanel.tsx:27-45` has no pause control.
 
-### F-17 [P3] open - Unreferenced duplicate logo and orphaned favicon ship in frontend/public
+### F-17 [P3] fixed - Unreferenced duplicate logo and orphaned favicon ship in frontend/public
 
 **File:** frontend/public/ALSTOM_CORPORATE LOGO_2 COLOURS_RGB.svg:1
 **Found:** 2026-09-30 by /audit independent (scope: current; lens: quality)
@@ -193,9 +203,11 @@ canonical.
 **Suggested fix:** Delete `ALSTOM_CORPORATE LOGO_2 COLOURS_RGB.svg` and
 `favicon.svg`. Nothing replaces them (`alstom-logo.svg` and `Alstom_logo.svg` stay
 in use), and no current requirement is lost.
-**Resolution:**
+**Resolution:** Re-examined 2026-09-30 by /audit (scope: full; all lenses). Still open: both files are tracked and referenced nowhere (`index.html` uses `Alstom_logo.svg`, `LoginPage.tsx` uses `alstom-logo.svg`).
 
-### F-18 [P3] open - IncidentStatusServiceIntegrationTest fails intermittently on a 1 ms rounding difference
+Fixed 2026-09-30. Deleted `ALSTOM_CORPORATE LOGO_2 COLOURS_RGB.svg` and `favicon.svg` (`git rm`, staged); `npm run build` passes. Awaiting re-review.
+
+### F-18 [P3] fixed - IncidentStatusServiceIntegrationTest fails intermittently on a 1 ms rounding difference
 
 **File:** backend/src/test/java/com/railops/backend/IncidentStatusServiceIntegrationTest.java:92
 **Found:** 2026-09-30 by /audit independent (scope: current; lens: tests)
@@ -212,4 +224,54 @@ next millisecond. A flaky gate can hide or be mistaken for a real regression.
 (`Instant.now().truncatedTo(ChronoUnit.MICROS)` in `IncidentStatusService`), so
 the returned and stored values agree; or compare with a 1 ms tolerance in the
 test. No current requirement is lost.
+**Resolution:** Re-examined 2026-09-30 by /audit (scope: full; all lenses). Still open: `IncidentStatusService.java:69` still stamps `Instant.now()` without truncating to microseconds.
+
+Fixed 2026-09-30. `IncidentStatusService` stamps `Instant.now().truncatedTo(ChronoUnit.MICROS)`, so the returned and stored values agree. `IncidentStatusServiceIntegrationTest` passes (run once; the failure was intermittent). Awaiting re-review.
+
+### F-19 [P2] fixed - Role badge text fails WCAG AA contrast in both themes
+
+**File:** frontend/src/components/layout/UserMenu.tsx:72
+**Found:** 2026-09-30 by /audit (scope: full; lens: quality)
+**Why it matters:** The badge label uses the role color as text on the app bar.
+Computed contrast ratios: VIEWER `#0288d1` is 3.86:1 on white and 3.54:1 on the
+light app bar (`#f5f5f5`), below the 4.5:1 that WCAG 1.4.3 requires for text this
+size. ADMIN `#2e7d32` is 4.70:1 on `#f5f5f5` but 3.14 to 3.65:1 on the dark
+backgrounds (`#212121`, `#121212`). The dark app bar color is an assumption from
+MUI's default grey, not measured in the running app. AGENTS.md says simplicity
+never removes accessibility. The same two colors are also used for the icons and
+the popover rows, where a 3:1 ratio would be enough.
+**Suggested fix:** Keep the colors for the icon and border, and set the badge
+label to a per-scheme text color that reaches 4.5:1 (for example MUI's
+`theme.palette.success.dark`/`info.dark` in light mode and `success.light`/
+`info.light` in dark mode, via `theme.applyStyles`). No current requirement is
+lost.
+**Resolution:** Fixed 2026-09-30. `UserMenu.tsx` keeps `color` for icons and borders and sets the badge label per scheme: ADMIN `#2e7d32` / `#66bb6a`, VIEWER `#01579b` / `#4fc3f7` (4.70 to 7.92:1 against white, `#f5f5f5`, `#212121` and `#121212`, computed, not measured in the running app). Awaiting re-review.
+
+### F-20 [P3] fixed - The row highlight map grows for as long as the tab stays open
+
+**File:** frontend/src/lib/highlights.ts:6
+**Found:** 2026-09-30 by /audit (scope: full; lens: performance)
+**Why it matters:** `markChanged` adds an entry to the module-level `changedAt`
+map for every pushed event and every status change, and nothing removes entries
+after their 3 s window (only the test helper clears it). At the producer default
+of one event every 2 s, a dashboard left open keeps about 43k entries a day. It
+is small per entry and is reset by a page reload, so this is slow growth, not an
+outage.
+**Suggested fix:** Delete entries older than `HIGHLIGHT_MS` inside `markChanged`
+(one loop over the map, or remove the entry in the existing per-row timer).
+Nothing observable changes.
+**Resolution:** Fixed 2026-09-30. `markChanged` drops entries older than `HIGHLIGHT_MS` before adding the new one; the existing highlight tests pass. Awaiting re-review.
+
+### F-21 [P3] open - LiveStateReconciler.rebuild is about 100 lines, twice the standard's guideline
+
+**File:** backend/src/main/java/com/railops/backend/LiveStateReconciler.java:125
+**Found:** 2026-09-30 by /audit (scope: full; lens: quality)
+**Why it matters:** The coding standards ask to keep functions under 50 lines
+when possible. `rebuild()` reads the Postgres aggregates and then writes the
+counters, services, timeline and recent list inside one anonymous
+`SessionCallback`, which makes the "absolute values in one MULTI/EXEC" contract
+harder to review than it needs to be.
+**Suggested fix:** Extract the four write groups (counters, services, timeline,
+recent list) into private methods that take the `RedisOperations`, keeping the
+single `multi()`/`exec()` pair where it is. No behavior change.
 **Resolution:**

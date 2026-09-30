@@ -2,6 +2,7 @@ package com.railops.backend;
 
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -42,7 +43,7 @@ public class IncidentStatusService {
      * takes exclusively (write lock). This is what keeps the two from racing: either this call fully finishes
      * (commit, then apply) before a concurrent rebuild's Postgres snapshot is taken, so the snapshot already
      * reflects it and no further Redis apply is pending; or it waits for a concurrent rebuild to finish first, so
-     * its own commit — and therefore its Redis apply — lands after the rebuild and is never double counted.
+     * its own commit (and therefore its Redis apply) lands after the rebuild and is never double counted.
      *
      * @throws EventNotFoundException when no event has this id
      * @throws InvalidStatusTransitionException when the lifecycle does not allow the change
@@ -66,7 +67,8 @@ public class IncidentStatusService {
                     if (!from.canTransitionTo(target)) {
                         throw new InvalidStatusTransitionException(from, target);
                     }
-                    found.changeStatus(target, Instant.now());
+                    // Postgres keeps microseconds; truncating here makes the returned and stored values agree.
+                    found.changeStatus(target, Instant.now().truncatedTo(ChronoUnit.MICROS));
                     repository.flush();
                     return new Change(EventResponse.from(found), from);
                 });
@@ -79,6 +81,8 @@ public class IncidentStatusService {
                                 event.status())) {
                             log.warn("No live state for service of event {}; status change not applied to Redis",
                                     event.eventId());
+                            // A missing service hash means Redis lost its data, so rebuild it from Postgres.
+                            reconcileState.markNeeded();
                         }
                     } catch (DataAccessException | CallNotPermittedException e) {
                         log.warn("Live state not updated for status change of event {}", event.eventId(), e);

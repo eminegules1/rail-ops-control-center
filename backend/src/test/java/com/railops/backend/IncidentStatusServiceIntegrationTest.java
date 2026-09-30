@@ -121,6 +121,19 @@ class IncidentStatusServiceIntegrationTest {
         assertThat(reconcileState.isNeeded()).isTrue();
     }
 
+    @Test
+    void missingLiveStateAfterCommitStillReturnsTheChangeAndMarksReconcileNeeded() {
+        insert(EventStatus.OPEN);
+        when(liveState.applyStatusChange(any(), any(), any(), any())).thenReturn(false);
+
+        EventResponse response = service.changeStatus(ID, EventStatus.RESOLVED);
+
+        assertThat(response.status()).isEqualTo(EventStatus.RESOLVED);
+        assertThat(stored().getStatus()).isEqualTo(EventStatus.RESOLVED);
+        verify(liveUpdates).eventUpdated(response);
+        assertThat(reconcileState.isNeeded()).isTrue();
+    }
+
     // Feature 14 Step 4: proves the guarantee LiveStateReconciler's rebuild depends on. A rebuild holds the write
     // lock for its whole snapshot-then-write; this simulates that by holding it directly, without needing a real
     // Redis outage to force the timing.

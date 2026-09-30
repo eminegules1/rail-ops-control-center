@@ -31,17 +31,23 @@ const ChevronDownIcon = () => (
   </SvgIcon>
 )
 
-const ROLES: Record<Role, { label: string; description: string; color: string; icon: ReactElement }> = {
+// `color` tints icons and borders; `text` is the badge label, picked per scheme to reach 4.5:1 on the app bar.
+const ROLES: Record<
+  Role,
+  { label: string; description: string; color: string; text: { light: string; dark: string }; icon: ReactElement }
+> = {
   ADMIN: {
     label: 'Admin',
     description: 'Full access: Modify incident status, acknowledge, resolve, reopen.',
     color: '#2e7d32',
+    text: { light: '#2e7d32', dark: '#66bb6a' },
     icon: <ShieldIcon />,
   },
   VIEWER: {
     label: 'Viewer',
     description: 'Read-only: Telemetry monitoring without modification permissions.',
     color: '#0288d1',
+    text: { light: '#01579b', dark: '#4fc3f7' },
     icon: <EyeIcon />,
   },
 }
@@ -68,13 +74,14 @@ export function UserMenu() {
         startIcon={current.icon}
         endIcon={<ChevronDownIcon />}
         onClick={(event) => setAnchor(event.currentTarget)}
-        sx={{
-          color: current.color,
+        sx={(theme) => ({
+          color: current.text.light,
+          ...theme.applyStyles('dark', { color: current.text.dark }),
           borderColor: `${current.color}80`,
           '&:hover': { borderColor: current.color, bgcolor: `${current.color}14` },
           fontWeight: 600,
           letterSpacing: '0.04em',
-        }}
+        })}
       >
         {session.role}
       </Button>

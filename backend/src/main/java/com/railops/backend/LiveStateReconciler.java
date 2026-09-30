@@ -27,8 +27,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * Rebuilds the Redis live state from PostgreSQL: once at startup when it looks empty, and again whenever the
- * "redis" circuit breaker closes after having tripped open while {@link ReconcileState} is marked needed. Computes
+ * Rebuilds the Redis live state from PostgreSQL: once at startup when it looks empty, whenever the "redis" circuit
+ * breaker closes after having tripped open while {@link ReconcileState} is marked needed, and every 30 seconds
+ * while the flag is still set with the breaker closed ({@link #retryIfStillNeeded}). Computes
  * the whole snapshot from Postgres aggregates and writes it into Redis as one pipelined batch of absolute values,
  * rather than replaying the Lua scripts once per stored event: their {@code processed:{id}} apply-once guard would
  * make them a no-op for any event Redis already has a guard key for, including one whose counted state is stale
@@ -93,8 +94,8 @@ class LiveStateReconciler implements DisposableBean {
                     reconcile();
                 }
             } catch (RuntimeException e) {
-                // Redis is unreachable at startup; the state-transition listener retries once it recovers.
-                log.warn("Startup reconciliation check failed; will retry once Redis recovers", e);
+                // This call is not breaker-guarded, so the failure never trips the breaker; the scheduled retry recovers it.
+                log.warn("Startup reconciliation check failed; will retry while the reconcile flag is set", e);
                 reconcileState.markNeeded();
             }
         });
@@ -111,7 +112,8 @@ class LiveStateReconciler implements DisposableBean {
             reconcileState.clear();
             log.info("Live state reconciled from Postgres");
         } catch (RuntimeException e) {
-            log.warn("Live state reconciliation failed; will retry once Redis recovers", e);
+            // The rebuild's own Redis pipeline is not breaker-guarded either, so the scheduled retry picks this up.
+            log.warn("Live state reconciliation failed; will retry while the reconcile flag is set", e);
             reconcileState.markNeeded();
         } finally {
             liveStateLock.forRebuild().unlock();
