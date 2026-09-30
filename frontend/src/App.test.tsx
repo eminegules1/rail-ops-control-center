@@ -44,9 +44,18 @@ describe('signed-in user', () => {
   it('shows who is signed in and their role', async () => {
     renderApp('/dashboard', undefined, undefined, sessionFor('VIEWER'))
 
-    expect(await screen.findByText('viewer')).toBeInTheDocument()
-    expect(screen.getByText('VIEWER')).toBeInTheDocument()
+    await userEvent.click(await screen.findByRole('button', { name: 'VIEWER' }))
+
+    expect(await screen.findByText('Access control & role')).toBeInTheDocument()
+    expect(screen.getByText('viewer')).toBeInTheDocument()
+    expect(screen.getByText('Read-only: Telemetry monitoring without modification permissions.')).toBeInTheDocument()
     expect(screen.queryByText('viewer · VIEWER')).not.toBeInTheDocument()
+  })
+
+  it('labels the badge with the ADMIN role', async () => {
+    renderApp('/dashboard')
+
+    expect(await screen.findByRole('button', { name: 'ADMIN' })).toBeInTheDocument()
   })
 
   it('signs out to the login page and forgets the session', async () => {
