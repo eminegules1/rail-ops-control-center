@@ -3,6 +3,9 @@ spring:
     name: producer
   kafka:
     bootstrap-servers: localhost:9092
+    template:
+      # Puts the W3C traceparent header on each record, so the backend's consumer span joins this trace.
+      observation-enabled: true
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
@@ -35,3 +38,11 @@ management:
     web:
       exposure:
         include: health,prometheus
+  tracing:
+    sampling:
+      # Every request and event is traced (Boot samples 10% by default); demo volume is small.
+      probability: 1.0
+  otlp:
+    tracing:
+      # OTLP/HTTP to Jaeger; the compose service overrides the host with MANAGEMENT_OTLP_TRACING_ENDPOINT.
+      endpoint: http://localhost:${JAEGER_OTLP_PORT:4318}/v1/traces

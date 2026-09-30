@@ -43,7 +43,9 @@ import org.testcontainers.kafka.KafkaContainer;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "resilience4j.circuitbreaker.instances.redis.sliding-window-size=2",
         "resilience4j.circuitbreaker.instances.redis.minimum-number-of-calls=2",
-        "resilience4j.circuitbreaker.instances.redis.wait-duration-in-open-state=300ms"})
+        "resilience4j.circuitbreaker.instances.redis.wait-duration-in-open-state=300ms",
+        // @AutoConfigureObservability (for the Prometheus endpoint) also turns tracing on; nothing listens on :4318.
+        "management.otlp.tracing.export.enabled=false"})
 @AutoConfigureObservability
 @Testcontainers
 class EndToEndIntegrationTest {

@@ -39,6 +39,8 @@ spring:
       properties:
         spring.deserializer.value.delegate.class: com.railops.backend.IncidentEventDeserializer
     listener:
+      # Continues the trace from the record's traceparent header, so a consumed event joins the producer's trace.
+      observation-enabled: true
       concurrency: 3
       # Offsets are committed only after the event is stored; MANUAL_IMMEDIATE also lets the error
       # handler commit the offsets of records it sent to the dead-letter topic.
@@ -92,3 +94,16 @@ management:
     web:
       exposure:
         include: health,prometheus
+  observations:
+    enable:
+      # Its filter-chain spans would be traces of their own for the skipped /actuator requests (see TracingConfig),
+      # and five extra spans on every API trace.
+      spring.security: false
+  tracing:
+    sampling:
+      # Every request and event is traced (Boot samples 10% by default); demo volume is small.
+      probability: 1.0
+  otlp:
+    tracing:
+      # OTLP/HTTP to Jaeger; the compose service overrides the host with MANAGEMENT_OTLP_TRACING_ENDPOINT.
+      endpoint: http://localhost:${JAEGER_OTLP_PORT:4318}/v1/traces

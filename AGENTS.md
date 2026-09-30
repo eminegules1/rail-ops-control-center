@@ -310,6 +310,8 @@ Local stack (repository root, Docker Desktop running; no `.env` required):
 - Reset all data: `docker compose down -v`
 - Kafka UI: http://localhost:8081; Kafka `localhost:9092` (host) or
   `kafka:29092` (containers)
+- Jaeger UI (traces): http://localhost:16686; OTLP/HTTP `localhost:4318` (host)
+  or `jaeger:4318` (containers)
 - Producer: http://localhost:8082 (`POST /produce?count=N`,
   `GET /actuator/health`)
 - Backend: http://localhost:8080 (`GET /actuator/health`; override the host

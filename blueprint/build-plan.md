@@ -27,7 +27,7 @@ Every app feature adds its own Dockerfile and compose service and updates the RE
 ## Stretch (bonus - only if time allows, in value order)
 
 - [x] 20. **Role-based login** - lightweight JWT auth with ADMIN (status changes) and VIEWER (read-only) demo users, login page, protected routes
-- [ ] 21. **Distributed tracing** - OpenTelemetry traces across producer → Kafka → backend → API, Jaeger container in compose
+- [x] 21. **Distributed tracing** - OpenTelemetry traces across producer → Kafka → backend → API, Jaeger container in compose
 - [ ] 22. **Continuous delivery** - CI builds and pushes Docker images to GitHub Container Registry on main
 - [ ] 23. **Kubernetes manifests** - Helm chart or manifests deploying the full stack
 - [ ] 24. **AI incident assistant** - panel that summarizes an incident and suggests next steps via an LLM API (disabled without an API key)

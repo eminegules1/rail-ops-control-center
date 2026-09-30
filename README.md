@@ -19,7 +19,7 @@ Redis live state, and a React dashboard shows service health and incidents live.
 - [Event producer](#event-producer), [Event ingestion](#event-ingestion-backend)
 - [Sign-in and roles](#sign-in-and-roles)
 - [Events API](#events-api), [Incident status update](#incident-status-update), [Dashboard data APIs](#dashboard-data-apis), [Real-time push](#real-time-push) - full reference in [docs/api.md](docs/api.md)
-- [Redis resilience](#redis-resilience), [Observability](#observability)
+- [Redis resilience](#redis-resilience), [Observability](#observability), [Distributed tracing](#distributed-tracing)
 - [Frontend](#frontend)
 - [Known limitations](#known-limitations)
 
@@ -42,7 +42,7 @@ every service shows `DOWN` and the counts are large. Times use the browser's loc
 (`docker info` succeeds), with at least 4 GB of memory available to Docker. The
 whole stack uses about 1.7 GB once running. Nothing else needs to be installed:
 the Java and Node builds happen inside the images, and no `.env` file is needed.
-These host ports must be free: 3000, 8080, 8081, 8082, 5432, 6379 and 9092.
+These host ports must be free: 3000, 8080, 8081, 8082, 5432, 6379, 9092, 16686 and 4318.
 
 From the repository root:
 
@@ -50,7 +50,7 @@ From the repository root:
 docker compose up -d --build --wait
 ```
 
-The command builds the three app images, starts all seven services in
+The command builds the three app images, starts all eight services in
 dependency order and returns once every one reports `healthy`. Expect about 5
 minutes for the very first build (Maven and npm downloads) and 2 to 3 minutes
 more for the services to become healthy. Later starts take about 1.5 minutes.
@@ -61,13 +61,14 @@ Then open:
 - Dashboard: http://localhost:3000 (it fills within seconds, because the
   producer publishes about 200 events at startup)
 - Kafka UI: http://localhost:8081
+- Jaeger (traces): http://localhost:16686, see [Distributed tracing](#distributed-tracing)
 - API docs (Swagger UI): http://localhost:8080/swagger-ui/index.html
 
 Sign in to the dashboard with `admin` / `RailOps#Admin2026` (may change incident status)
 or `viewer` / `RailOps#Viewer2026` (read-only); see [Sign-in and roles](#sign-in-and-roles).
 
 ```bash
-docker compose ps             # all 7 services should show (healthy)
+docker compose ps             # all 8 services should show (healthy)
 docker compose down           # stop, keeping data
 docker compose down -v        # stop and DELETE all data (Kafka, Redis, Postgres)
 ```
@@ -82,7 +83,7 @@ docker compose down -v        # stop and DELETE all data (Kafka, Redis, Postgres
   `$env:BACKEND_PORT=8083; docker compose up -d --build --wait`), and use
   http://localhost:8083 for the backend. The variables are `FRONTEND_PORT`,
   `BACKEND_PORT`, `KAFKA_UI_PORT`, `PRODUCER_PORT`, `POSTGRES_PORT`,
-  `REDIS_PORT` and `KAFKA_PORT`. The dashboard on port 3000 reaches the backend
+  `REDIS_PORT`, `KAFKA_PORT`, `JAEGER_UI_PORT` and `JAEGER_OTLP_PORT`. The dashboard on port 3000 reaches the backend
   through nginx, so it works whatever `BACKEND_PORT` is.
 - **A service stays `unhealthy`, or `--wait` reports one that failed:** run
   `docker compose ps` to see which one, then `docker compose logs <service>`.
@@ -112,6 +113,7 @@ flowchart LR
             Reconciler["live-state reconciler"]
         end
 
+        Jaeger["jaeger<br/>:16686<br/>in-memory traces"]
         Postgres[("PostgreSQL<br/>events table<br/>source of truth")]
         Redis[("Redis<br/>live state and summary cache")]
     end
@@ -128,6 +130,8 @@ flowchart LR
     Rest -.->|"fallback when Redis is down"| Postgres
     Postgres -.->|"rebuild"| Reconciler
     Reconciler -.-> Redis
+    Producer -.->|"OTLP spans"| Jaeger
+    Backend -.->|"OTLP spans"| Jaeger
     Browser --> Nginx
     Nginx -->|"/api"| Rest
     Nginx -->|"/ws"| Ws
@@ -279,6 +283,7 @@ docker compose logs -f kafka
 | Dashboard (nginx) | http://localhost:3000 | `frontend:80` |
 | Kafka | `localhost:9092` | `kafka:29092` |
 | Kafka UI | http://localhost:8081 | - |
+| Jaeger UI, OTLP/HTTP | http://localhost:16686, `localhost:4318` | `jaeger:16686`, `jaeger:4318` |
 | Producer | http://localhost:8082 | `producer:8080` |
 | Backend | http://localhost:8080 | `backend:8080` |
 | Redis | `localhost:6379` | `redis:6379` |
@@ -567,7 +572,7 @@ oversights:
   `127.0.0.1`, so only someone already on the machine can reach the endpoint.
 - **No revocation.** Signing out clears the token in the browser; the token
   itself stays valid until it expires, or the backend restarts with a random key.
-- **The producer and Kafka UI are not behind the login.** Only the backend and the
+- **The producer, Kafka UI and Jaeger UI are not behind the login.** Only the backend and the
   dashboard are.
 
 ## Events API
@@ -876,6 +881,66 @@ in the stack; the endpoint is there to be scraped.
 curl -s http://localhost:8080/actuator/prometheus | grep -E "^(ingestion_events_total|resilience4j_circuitbreaker_state)"
 ```
 
+## Distributed tracing
+
+The producer and the backend send OpenTelemetry traces (OTLP over HTTP) to a
+Jaeger container. Open http://localhost:16686 and pick the service `producer` or
+`backend`. Every request and event is traced (100% sampling), because the demo
+volume is small.
+
+**What one trace shows.** The producer puts a W3C `traceparent` header on each
+Kafka record, and the backend's listener continues from it, so one event is one
+trace across both services:
+
+| Span | Service | Comes from |
+|---|---|---|
+| `http post /produce` | producer | a manual `POST /produce` (the scheduled sends have `task producer-runner.send-next` instead) |
+| `incident-events send` | producer | the Kafka send |
+| `incident-events receive` | backend | the consumer handling that record |
+
+To follow one event: `curl -X POST "http://localhost:8082/produce?count=1"`, then
+in Jaeger choose service `producer`, operation `http post /produce`, and open
+the trace.
+
+**Backend API calls** (`http get /api/events`, `http put /api/events/{eventId}/status`,
+`http post /api/auth/login`, and the rest) are one-span traces of their own. The
+browser sends no trace header, so a trace starts at the backend. The backend's
+scheduled jobs (`task live-update-publisher.publish-summary`,
+`task live-state-reconciler.retry-if-still-needed`) also appear as their own traces.
+
+**Not traced:** `/actuator` requests (the compose healthchecks would otherwise add
+a trace every few seconds), Spring Security's filter steps, PostgreSQL, Redis,
+WebSocket pushes, and the dead-letter publish.
+
+**Logs.** Backend log lines written while a traced request or record is handled
+carry `traceId` and `spanId` next to `eventId`. (The producer logs nothing while it
+sends, so it has no such lines to match.) The backend logs
+nothing at INFO for an event that is stored normally, so the lines that carry a
+trace ID are the ones for duplicates, retries and dead-lettered records. Find
+one and paste its ID into Jaeger's "Lookup by Trace ID":
+
+```bash
+docker compose logs backend | grep '"traceId"'
+```
+
+A record that cannot be deserialized is logged with its `traceId`, but Jaeger only
+has the producer's `incident-events send` span for it: the backend starts no
+consumer span for it.
+
+**Jaeger is optional at runtime.** `producer` and `backend` do not wait for it
+and do not fail without it. With `docker compose stop jaeger` both stayed
+`UP` and ingestion continued; each app logs one `Failed to export spans` warning
+about every 16 seconds until Jaeger is back, and the spans from that time are lost.
+
+**Limits.** Jaeger keeps traces in memory only: at most 10,000 traces
+(`--set=extensions.jaeger_storage.backends.some_storage.memory.max_traces=10000`;
+Jaeger v2 rejects the older `--memory.max-traces` flag), inside a 512 MB container
+limit (`mem_limit`). Restarting the container clears them. The apps export to
+`http://jaeger:4318/v1/traces` in Compose and to `http://localhost:4318/v1/traces` when
+run from the host; `JAEGER_UI_PORT` and `JAEGER_OTLP_PORT` change the host ports.
+`TracingPropagationIntegrationTest` covers the backend side of the `traceparent`
+header and the `traceId` in logs.
+
 ## Frontend
 
 The dashboard is a React + TypeScript + Vite app (React Router, TanStack
@@ -995,12 +1060,16 @@ What this project deliberately does not solve, with links to the detail.
 **Scope**
 
 - **Login is a demo, not a hardened deployment.** Two fixed accounts, a token in
-  `localStorage`, no revocation, lockout or rate limiting, and the producer and
-  Kafka UI are not behind it
+  `localStorage`, no revocation, lockout or rate limiting, and the producer,
+  Kafka UI and Jaeger UI are not behind it
   ([Sign-in and roles](#sign-in-and-roles)). The database credentials are local
   development defaults
   ([Configuration and credentials](#configuration-and-credentials)).
-- **Not built:** user management, distributed tracing, continuous deployment and
+- **Tracing is a local demo.** Jaeger keeps at most 10,000 traces in memory and
+  loses them on restart, its UI is not behind the login, the browser is not
+  instrumented, and PostgreSQL, Redis, WebSocket pushes and the dead-letter publish
+  are not traced ([Distributed tracing](#distributed-tracing)).
+- **Not built:** user management, continuous deployment and
   Kubernetes manifests. CI runs tests and builds only
   ([Continuous integration](#continuous-integration)).
 - **Performance figures are single local observations**, not benchmarks

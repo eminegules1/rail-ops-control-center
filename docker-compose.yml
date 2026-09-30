@@ -81,6 +81,24 @@ services:
       timeout: 3s
       retries: 12
 
+  jaeger:
+    image: jaegertracing/jaeger:2.20.0
+    # All-in-one with in-memory storage: traces are lost when this container restarts. Cap them at 10000 traces
+    # (jaeger v2 sets it with --set on the storage config, not the v1 --memory.max-traces flag) and the container at
+    # 512 MB so a burst of spans cannot exhaust Docker's memory.
+    command: ["--set=extensions.jaeger_storage.backends.some_storage.memory.max_traces=10000"]
+    mem_limit: 512m
+    ports:
+      - "127.0.0.1:${JAEGER_UI_PORT:-16686}:16686"
+      # OTLP/HTTP, for apps run from the host (IDE); containers use jaeger:4318.
+      - "127.0.0.1:${JAEGER_OTLP_PORT:-4318}:4318"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:16686/"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 12
+
   producer:
     build:
       context: .
@@ -90,6 +108,8 @@ services:
       PRODUCER_INTERVAL_MS: ${PRODUCER_INTERVAL_MS:-2000}
       PRODUCER_DUPLICATE_RATIO: ${PRODUCER_DUPLICATE_RATIO:-0.05}
       PRODUCER_INVALID_RATIO: ${PRODUCER_INVALID_RATIO:-0.02}
+      # Tracing is best-effort: no depends_on, so the producer starts and works with Jaeger stopped.
+      MANAGEMENT_OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
     ports:
       - "127.0.0.1:${PRODUCER_PORT:-8082}:8080"
     depends_on:
@@ -112,6 +132,8 @@ services:
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-rail_ops}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-rail_ops_local_only}
       SPRING_DATA_REDIS_HOST: redis
+      # Tracing is best-effort: no depends_on, so the backend starts and works with Jaeger stopped.
+      MANAGEMENT_OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
       # Blank means a random key per start; see .env.example.
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-}
     ports:

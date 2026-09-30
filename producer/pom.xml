@@ -32,6 +32,15 @@
             <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
         <dependency>
+            <!-- Tracing: Micrometer Tracing on the OpenTelemetry SDK, exported over OTLP/HTTP (versions from the Boot BOM). -->
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-otel</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-otlp</artifactId>
+        </dependency>
+        <dependency>
             <!-- Not managed by the Spring Boot 3.5 BOM; needs Java 17+ (project is on 21). -->
             <groupId>net.logstash.logback</groupId>
             <artifactId>logstash-logback-encoder</artifactId>
