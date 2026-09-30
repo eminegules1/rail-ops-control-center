@@ -250,14 +250,40 @@ per module at `backend/target/site/jacoco/index.html` and
 ## Continuous integration
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every pull request
-and on every push to `main` or `master`. It has three independent jobs, each
-runnable locally with the same commands:
+and on every push to `main` or `master`. It has three independent check jobs, each
+runnable locally with the same commands, and a fourth job that publishes images:
 
 | Job | Where | Command |
 |---|---|---|
 | Backend and producer | repository root (JDK 21, Docker running for Testcontainers) | `mvn -B verify` |
 | Frontend | `frontend/` (Node 24) | `npm ci`, `npm run lint`, `npm test`, `npm run build` |
 | Docker images | repository root | `docker compose build` |
+| Publish (push to `main` or `master` only) | GitHub Actions | builds and pushes the three app images to GHCR |
+
+### Publishing images
+
+The publish job waits for the three check jobs, so a commit that fails any of
+them is never published. It never runs for pull requests. It builds each image
+from the same context and Dockerfile as `docker-compose.yml` and pushes it to
+GitHub Container Registry with the workflow's built-in `GITHUB_TOKEN`; no
+secrets need to be set up.
+
+| Image | Tags |
+|---|---|
+| `ghcr.io/<owner>/<repo>-producer` | `latest`, `sha-<short commit>` |
+| `ghcr.io/<owner>/<repo>-backend` | `latest`, `sha-<short commit>` |
+| `ghcr.io/<owner>/<repo>-frontend` | `latest`, `sha-<short commit>` |
+
+`<owner>/<repo>` is the lowercased repository path. To pull one:
+
+```bash
+docker pull ghcr.io/<owner>/<repo>-backend:latest
+```
+
+A package GitHub creates this way is private until you change its visibility in
+the package settings on GitHub. The images are built for `linux/amd64` only. The
+local stack still builds from source with `docker compose up --build`; it does
+not pull these images.
 
 ## Repository layout
 
@@ -1070,7 +1096,8 @@ What this project deliberately does not solve, with links to the detail.
   instrumented, and PostgreSQL, Redis, WebSocket pushes and the dead-letter publish
   are not traced ([Distributed tracing](#distributed-tracing)).
 - **Not built:** user management, continuous deployment and
-  Kubernetes manifests. CI runs tests and builds only
+  Kubernetes manifests. CI runs tests and builds, and publishes the three images
+  to GHCR on `main`, but nothing deploys them
   ([Continuous integration](#continuous-integration)).
 - **Performance figures are single local observations**, not benchmarks
   ([Performance notes](#performance-notes)).

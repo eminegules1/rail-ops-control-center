@@ -23,24 +23,6 @@ with a `pg_trgm` GIN index on `lower(message)` in a new Flyway migration, or by
 keeping the default time-window sort without an exact total.
 **Resolution:**
 
-### F-04 [P3] closed - Cross-origin handshake rejection on /ws has no automated test
-
-**File:** backend/src/main/java/com/railops/backend/WebSocketConfig.java:40
-**Found:** 2026-09-28 by /audit independent (scope: current; lens: tests, security)
-**Why it matters:** The spec relies on Spring's default same-origin handshake
-check as the only browser-facing guard on `/ws` (no auth in the MVP). No
-backend test sends a handshake with a foreign `Origin`; `LiveUpdatesIntegrationTest`
-connects without any `Origin`, which Spring always accepts. A later
-`setAllowedOrigins("*")` or `setAllowedOriginPatterns("*")` would keep every
-test green. The only evidence is the manual curl check in step 4.
-**Suggested fix:** In `LiveUpdatesIntegrationTest`, connect once with
-`WebSocketHttpHeaders` carrying `Origin: http://evil.example` and assert the
-handshake fails (403), and optionally once with `Origin: http://localhost:<port>`
-and assert it succeeds. No production change.
-**Resolution:** Fixed by fix `test-cross-origin-rejection-on-the-websocket-endpoint`. `LiveUpdatesIntegrationTest.refusesHandshakeFromAnotherOrigin` connects with `Origin: http://evil.example` and requires the handshake to fail with 403; `acceptsHandshakeFromTheServersOwnOrigin` connects with the server's own origin. Widening the endpoint to `setAllowedOriginPatterns("*")` makes the first test fail. Awaiting re-review.
-
-Closed 2026-09-30 by /audit (scope: full; all lenses). `WebSocketConfig.registerStompEndpoints` still uses the default same-origin check, both tests exist at `LiveUpdatesIntegrationTest.java:145-154`, and they passed in the full `mvn -B verify` run (289 backend tests, 0 failures).
-
 ### F-05 [P3] unverified - A CREATED push can arrive after an UPDATED push for the same event with a stale status
 
 **File:** backend/src/main/java/com/railops/backend/EventIngestionService.java:58
@@ -274,4 +256,19 @@ harder to review than it needs to be.
 **Suggested fix:** Extract the four write groups (counters, services, timeline,
 recent list) into private methods that take the `RedisOperations`, keeping the
 single `multi()`/`exec()` pair where it is. No behavior change.
+**Resolution:**
+
+### F-22 [P3] open - Known limitations says images publish on main only, but the job also publishes on master
+
+**File:** README.md:1099
+**Found:** 2026-09-30 by /audit (scope: current; lens: quality; independent review)
+**Why it matters:** The publish job runs for every `push` event, and the
+workflow's `push` trigger covers both `main` and `master`
+(`.github/workflows/ci.yml:3-6,60`). The Continuous integration section says
+"`main` or `master`", but the "Not built" bullet says the images are published
+"on `main`". This repository's local base branch is `master` (no `main`
+exists), so that line understates when images are published. Step 2's Done when asks for text that
+matches the workflow's triggers.
+**Suggested fix:** Change "to GHCR on `main`" to "to GHCR on pushes to `main` or
+`master`" in the Known limitations bullet. Docs only; no behavior change.
 **Resolution:**
