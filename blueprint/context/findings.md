@@ -140,3 +140,76 @@ needs volume loss, a recreated container, or a lost AOF tail.
 wiped live state. Optionally, move the startup emptiness check inside
 `reconcile()`'s lock, or repeat it from `retryIfStillNeeded()`. Add one test.
 **Resolution:**
+
+### F-15 [P3] open - The 3.3 MB login video is still mounted, and so fetched, for reduced-motion visitors
+
+**File:** frontend/src/components/login/BrandPanel.tsx:43
+**Found:** 2026-09-30 by /audit independent (scope: current; lens: performance)
+**Why it matters:** From `md` up, `LoginPage.tsx:91` always renders
+`BrandPanel`, which always mounts a `<video autoPlay src="/Alstom_History_Innovation.mp4">`.
+Reduced motion only adds `display: none` through CSS (line 43). CSS display does
+not stop a media element's resource selection, and `autoplay` asks the browser to
+buffer, so a reduced-motion visitor on a desktop still starts downloading the
+3.3 MB file they never see. The small-screen case is correct: below `md` the
+panel is not rendered at all. No test covers the reduced-motion path (jsdom
+cannot evaluate the CSS media query). Not observed in a network trace in this
+pass; the conclusion rests on the code path and standard media-element behavior.
+**Suggested fix:** Decide in JS, like the breakpoint: render the `<video>` only
+when `useMediaQuery('(prefers-reduced-motion: no-preference)', { noSsr: true })`
+also matches, and keep the poster background otherwise. Add a test with the
+`matchMedia` stub that reduced motion renders no `video`. No current requirement
+is lost.
+**Resolution:**
+
+### F-16 [P3] open - The looping background video has no way to pause it
+
+**File:** frontend/src/components/login/BrandPanel.tsx:33
+**Found:** 2026-09-30 by /audit independent (scope: current; lens: quality)
+**Why it matters:** The video autoplays and loops indefinitely (about 10.8 s per
+loop) beside the sign-in form, with `aria-hidden`, `tabIndex={-1}` and no
+controls. WCAG 2.2.2 (Pause, Stop, Hide, level A) requires a pause or stop
+mechanism for automatically started moving content that lasts more than 5 s and
+sits next to other content. Hiding it for `prefers-reduced-motion` helps only
+users who set that OS preference. AGENTS.md says simplicity never removes
+accessibility.
+**Suggested fix:** Add one small visible pause/play toggle button over the panel
+that calls `video.pause()` and `play()` (keeps the look), or stop the motion
+within 5 s (for example, play once without `loop` using a clip trimmed to under
+5 s). The toggle loses no current requirement; the second option changes the
+approved step-6 "looping" design and needs the user's decision.
+**Resolution:**
+
+### F-17 [P3] open - Unreferenced duplicate logo and orphaned favicon ship in frontend/public
+
+**File:** frontend/public/ALSTOM_CORPORATE LOGO_2 COLOURS_RGB.svg:1
+**Found:** 2026-09-30 by /audit independent (scope: current; lens: quality)
+**Why it matters:** `ALSTOM_CORPORATE LOGO_2 COLOURS_RGB.svg` is byte-identical to
+`alstom-logo.svg` (`cmp` reports no difference) and nothing in `src/`,
+`index.html` or the docs references it; its file name also contains spaces. After
+`index.html` switched the icon to `/Alstom_logo.svg`, the old
+`frontend/public/favicon.svg` is referenced nowhere either. Vite copies both into
+every build, so they are dead files that invite confusion about which logo is
+canonical.
+**Suggested fix:** Delete `ALSTOM_CORPORATE LOGO_2 COLOURS_RGB.svg` and
+`favicon.svg`. Nothing replaces them (`alstom-logo.svg` and `Alstom_logo.svg` stay
+in use), and no current requirement is lost.
+**Resolution:**
+
+### F-18 [P3] open - IncidentStatusServiceIntegrationTest fails intermittently on a 1 ms rounding difference
+
+**File:** backend/src/test/java/com/railops/backend/IncidentStatusServiceIntegrationTest.java:92
+**Found:** 2026-09-30 by /audit independent (scope: current; lens: tests)
+**Why it matters:** Not part of this feature's delta, but it made the full
+`mvn -B -pl backend -am verify` fail once in this pass (285 run, 1 failure:
+`allowedTransitionIsStored[1]`, expected `...57.572Z` but was `...57.571Z`); a
+rerun of the class passed 10/10. `IncidentStatusService.java:69` stamps
+`Instant.now()` (sub-microsecond on this JVM), PostgreSQL rounds it to
+microseconds, and `EventResponse.java:23` truncates the in-memory value to
+milliseconds. A time such as `.5719996` is returned as `.571` but stored as
+`.572000`, so line 92's equality fails whenever the rounding carries into the
+next millisecond. A flaky gate can hide or be mistaken for a real regression.
+**Suggested fix:** Truncate the timestamp to microseconds where it is created
+(`Instant.now().truncatedTo(ChronoUnit.MICROS)` in `IncidentStatusService`), so
+the returned and stored values agree; or compare with a 1 ms tolerance in the
+test. No current requirement is lost.
+**Resolution:**

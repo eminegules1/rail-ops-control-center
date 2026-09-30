@@ -1,13 +1,24 @@
 import CssBaseline from '@mui/material/CssBaseline'
 import { ThemeProvider } from '@mui/material/styles'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { useState } from 'react'
+import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { LiveUpdatesProvider } from './api/liveUpdates'
 import { retryUnlessClientError } from './api/client'
 import { connectLive } from './api/stompConnection'
 import type { ConnectFn } from './api/stompConnection'
+import { useSession } from './lib/session'
 import { theme } from './theme'
+
+/** Empties the query cache whenever nobody is signed in, so the next user never sees the last user's data. */
+function ClearCacheWhenSignedOut() {
+  const signedIn = useSession() !== null
+  const queryClient = useQueryClient()
+  useEffect(() => {
+    if (!signedIn) queryClient.clear()
+  }, [signedIn, queryClient])
+  return null
+}
 
 type Props = {
   children: ReactNode
@@ -26,6 +37,7 @@ export function AppProviders({ children, queryClient, connectLive: connect = con
     <ThemeProvider theme={theme} noSsr>
       <CssBaseline />
       <QueryClientProvider client={queryClient ?? defaultClient}>
+        <ClearCacheWhenSignedOut />
         <LiveUpdatesProvider connect={connect}>{children}</LiveUpdatesProvider>
       </QueryClientProvider>
     </ThemeProvider>

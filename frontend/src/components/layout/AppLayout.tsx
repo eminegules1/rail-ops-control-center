@@ -1,5 +1,6 @@
 import AppBar from '@mui/material/AppBar'
 import Box from '@mui/material/Box'
+import Divider from '@mui/material/Divider'
 import Drawer from '@mui/material/Drawer'
 import List from '@mui/material/List'
 import ListItemButton from '@mui/material/ListItemButton'
@@ -9,6 +10,7 @@ import Typography from '@mui/material/Typography'
 import { NavLink, Outlet } from 'react-router'
 import { ConnectionChip } from './ConnectionChip'
 import { ThemeSwitch } from './ThemeSwitch'
+import { UserMenu } from './UserMenu'
 
 const NAV_WIDTH = 200
 
@@ -28,6 +30,8 @@ export function AppLayout() {
           </Typography>
           <ConnectionChip />
           <ThemeSwitch />
+          <Divider orientation="vertical" flexItem sx={{ mx: 1, my: 1 }} />
+          <UserMenu />
         </Toolbar>
       </AppBar>
       <Drawer

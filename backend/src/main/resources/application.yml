@@ -59,6 +59,14 @@ ingestion:
     max-interval: 30s
     max-retries: 8
 
+auth:
+  # Local demo accounts only, like the database password above.
+  admin-password: RailOps#Admin2026
+  viewer-password: RailOps#Viewer2026
+  # HS256 key for login tokens, at least 32 bytes. No default is committed: blank means a random key per start,
+  # so sessions end when the backend restarts. Set AUTH_JWT_SECRET to keep them.
+  jwt-secret: ${AUTH_JWT_SECRET:}
+
 resilience4j:
   circuitbreaker:
     instances:

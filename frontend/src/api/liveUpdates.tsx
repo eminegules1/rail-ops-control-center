@@ -17,6 +17,7 @@ import { dashboardKeys, RECENT_EVENTS_LIMIT } from './dashboard'
 import { eventKeys } from './events'
 import type { StatusChange } from './events'
 import { markChanged } from '../lib/highlights'
+import { useSession } from '../lib/session'
 import { serviceKeys } from './services'
 import type { ConnectFn } from './stompConnection'
 import { connectLive as defaultConnectLive } from './stompConnection'
@@ -34,13 +35,14 @@ type Props = {
   connect?: ConnectFn
 }
 
-/** Opens one live connection for the app's lifetime, patches the query cache from its pushes, and exposes its
+/** Opens one live connection while someone is signed in, patches the query cache from its pushes, and exposes its
  * connection state via `useConnectionState`. */
 export function LiveUpdatesProvider({ children, connect = defaultConnectLive }: Props) {
   const [state, setStateRaw] = useState<ConnectionState>('connecting')
   const stateRef = useRef<ConnectionState>('connecting')
   const offlineTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const queryClient = useQueryClient()
+  const signedIn = useSession() !== null
 
   const setState = (next: ConnectionState) => {
     stateRef.current = next
@@ -48,6 +50,9 @@ export function LiveUpdatesProvider({ children, connect = defaultConnectLive }: 
   }
 
   useEffect(() => {
+    // Nobody signed in, so the server would refuse the connection anyway.
+    if (!signedIn) return
+
     // A status-change mutation for this event is in flight: its own onSettled refetch will reconcile, so a push
     // arriving in the meantime (possibly older than the change being sent) is skipped rather than applied.
     const isChangingStatus = (eventId: string) =>
@@ -121,8 +126,10 @@ export function LiveUpdatesProvider({ children, connect = defaultConnectLive }: 
     return () => {
       clearTimeout(offlineTimer.current)
       connection.close()
+      // The next sign-in starts from "connecting" again.
+      setState('connecting')
     }
-  }, [connect, queryClient])
+  }, [connect, queryClient, signedIn])
 
   return <ConnectionStateContext.Provider value={state}>{children}</ConnectionStateContext.Provider>
 }

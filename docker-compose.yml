@@ -112,6 +112,8 @@ services:
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-rail_ops}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-rail_ops_local_only}
       SPRING_DATA_REDIS_HOST: redis
+      # Blank means a random key per start; see .env.example.
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-}
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
     depends_on:

@@ -17,6 +17,8 @@ import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -33,6 +35,7 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
     private static final URI INVALID_STATUS_TRANSITION = URI.create("/problems/invalid-status-transition");
+    private static final String LOGIN_PATH = "/api/auth/login";
 
     @ExceptionHandler(EventNotFoundException.class)
     ProblemDetail eventNotFound(EventNotFoundException e) {
@@ -54,6 +57,24 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         problem.setType(INVALID_STATUS_TRANSITION);
         problem.setTitle("Invalid status transition");
         problem.setProperty("allowedTransitions", e.getAllowedTransitions());
+        return problem;
+    }
+
+    /** The same answer for an unknown user and a wrong password; nothing about the attempt is logged. */
+    @ExceptionHandler(BadCredentialsException.class)
+    ProblemDetail invalidCredentials(BadCredentialsException e) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED,
+                "Invalid username or password");
+        problem.setTitle("Invalid credentials");
+        return problem;
+    }
+
+    /** Without this a denial thrown from a controller would fall into the catch-all below and become a 500. */
+    @ExceptionHandler(AccessDeniedException.class)
+    ProblemDetail accessDenied(AccessDeniedException e) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN,
+                ProblemResponses.FORBIDDEN_DETAIL);
+        problem.setTitle("Forbidden");
         return problem;
     }
 
@@ -98,11 +119,16 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         return badRequest(ex, "Invalid request", detail, headers, status, request);
     }
 
-    /** Names an enum field's allowed values without echoing the rejected text; other bad bodies get a fixed hint. */
+    /**
+     * Names an enum field's allowed values without echoing the rejected text; other bad bodies get a fixed hint for
+     * the endpoint they were sent to.
+     */
     @Override
     protected ResponseEntity<Object> handleHttpMessageNotReadable(HttpMessageNotReadableException ex,
             HttpHeaders headers, HttpStatusCode status, WebRequest request) {
-        String detail = "request body must be JSON like {\"status\":\"ACKNOWLEDGED\"}";
+        String detail = request.getDescription(false).equals("uri=" + LOGIN_PATH)
+                ? "request body must be JSON like {\"username\":\"...\",\"password\":\"...\"}"
+                : "request body must be JSON like {\"status\":\"ACKNOWLEDGED\"}";
         if (ex.getCause() instanceof MismatchedInputException mismatch && mismatch.getTargetType() != null
                 && mismatch.getTargetType().isEnum()) {
             List<JsonMappingException.Reference> path = mismatch.getPath();

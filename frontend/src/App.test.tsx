@@ -1,7 +1,10 @@
+import { QueryClient } from '@tanstack/react-query'
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { getSession } from './lib/session'
 import { renderApp } from './test/renderApp'
+import { sessionFor } from './test/sessions'
 
 // The dashboard polls the API; these tests only care about the shell.
 beforeEach(() => {
@@ -34,6 +37,45 @@ describe('app shell', () => {
     renderApp('/nope')
     expect(await screen.findByRole('heading', { level: 1, name: 'Page not found' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Go to the dashboard' })).toHaveAttribute('href', '/dashboard')
+  })
+})
+
+describe('signed-in user', () => {
+  it('shows who is signed in and their role', async () => {
+    renderApp('/dashboard', undefined, undefined, sessionFor('VIEWER'))
+
+    expect(await screen.findByText('viewer')).toBeInTheDocument()
+    expect(screen.getByText('VIEWER')).toBeInTheDocument()
+    expect(screen.queryByText('viewer · VIEWER')).not.toBeInTheDocument()
+  })
+
+  it('signs out to the login page and forgets the session', async () => {
+    renderApp('/dashboard')
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Sign out' }))
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Sign in' })).toBeInTheDocument()
+    expect(getSession()).toBeNull()
+    expect(localStorage.getItem('railops.session')).toBeNull()
+  })
+
+  it('empties the query cache on sign-out', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    queryClient.setQueryData(['events', 'list', 'x'], { content: [] })
+    renderApp('/dashboard', queryClient)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Sign out' }))
+
+    await screen.findByRole('heading', { level: 1, name: 'Sign in' })
+    expect(queryClient.getQueryCache().getAll()).toHaveLength(0)
+  })
+
+  it('returns to the login page when the API rejects the token', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ title: 'Unauthorized' }, { status: 401 })))
+    renderApp('/dashboard')
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Sign in' })).toBeInTheDocument()
+    expect(getSession()).toBeNull()
   })
 })
 

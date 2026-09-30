@@ -17,6 +17,7 @@ Redis live state, and a React dashboard shows service health and incidents live.
 - [Testing](#testing), [Continuous integration](#continuous-integration)
 - [Repository layout](#repository-layout), [Local infrastructure](#local-infrastructure)
 - [Event producer](#event-producer), [Event ingestion](#event-ingestion-backend)
+- [Sign-in and roles](#sign-in-and-roles)
 - [Events API](#events-api), [Incident status update](#incident-status-update), [Dashboard data APIs](#dashboard-data-apis), [Real-time push](#real-time-push) - full reference in [docs/api.md](docs/api.md)
 - [Redis resilience](#redis-resilience), [Observability](#observability)
 - [Frontend](#frontend)
@@ -61,6 +62,9 @@ Then open:
   producer publishes about 200 events at startup)
 - Kafka UI: http://localhost:8081
 - API docs (Swagger UI): http://localhost:8080/swagger-ui/index.html
+
+Sign in to the dashboard with `admin` / `RailOps#Admin2026` (may change incident status)
+or `viewer` / `RailOps#Viewer2026` (read-only); see [Sign-in and roles](#sign-in-and-roles).
 
 ```bash
 docker compose ps             # all 7 services should show (healthy)
@@ -293,7 +297,9 @@ without a `.env` file. To override ports or credentials, copy `.env.example` to
 local demo default only; applications read credentials from the same
 environment variables and never hardcode them. A production deployment would
 take credentials from a secrets manager or Docker secrets and would not publish
-these ports. All ports are bound to `127.0.0.1`.
+these ports. All ports are bound to `127.0.0.1`. The one optional setting is
+`AUTH_JWT_SECRET`, the key that signs login tokens; `.env.example` explains it
+([Sign-in and roles](#sign-in-and-roles)).
 
 ## Event producer
 
@@ -507,6 +513,63 @@ docker compose exec redis redis-cli HGETALL service:signal-service
 docker compose exec redis redis-cli LRANGE recent:events 0 9
 ```
 
+## Sign-in and roles
+
+The dashboard and every `/api/**` call need a login. Two demo accounts are built
+in; their credentials are local demo values, like the database password.
+
+| Username | Password | Role | Can |
+|---|---|---|---|
+| `admin` | `RailOps#Admin2026` | `ADMIN` | everything, including acknowledging, resolving and reopening incidents |
+| `viewer` | `RailOps#Viewer2026` | `VIEWER` | read everything; the Events page shows a read-only note instead of the status buttons, and `PUT /api/events/{eventId}/status` answers 403 |
+
+`POST /api/auth/login` with `{"username":"...","password":"..."}` returns a
+bearer token. To call the API from a terminal:
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"RailOps#Admin2026"}' | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/events?size=1"
+```
+
+In Swagger UI choose **Authorize** and paste the token. Public without a token:
+the login endpoint, `/actuator/health`, `/actuator/prometheus`, Swagger UI and
+`/v3/api-docs`. The `/ws` handshake is open too, but the STOMP `CONNECT` frame
+must carry the token. The exact rules and error shapes are in
+[docs/api.md](docs/api.md#authentication).
+
+**How it works.** Spring Security validates a stateless HS256 JWT (8 hours,
+claims `sub`, `role`, `iat`, `exp`) on every request; there are no sessions or
+cookies. The dashboard keeps the token in `localStorage`, sends it as a bearer
+header and in the STOMP `CONNECT` frame, and closes the live connection when you
+sign out. When the API answers 401 (the token expired, or the backend was
+restarted with a random key) it returns to the sign-in page, and after you sign
+in again it takes you back to the page you were on.
+
+The signing key comes from `AUTH_JWT_SECRET`. No key is committed. If it is
+unset the backend generates a random one at every start, so a backend restart
+signs everyone out; set it in `.env` (at least 32 characters, see
+`.env.example`) to keep sessions across restarts. A value shorter than 32 bytes
+stops the backend at startup.
+
+**Deliberate trade-offs.** These are scope decisions for a local demo, not
+oversights:
+
+- **Two fixed accounts, not managed users.** They come from configuration.
+  Registration and user management are out of scope; a production version would
+  store users in PostgreSQL behind an admin API.
+- **The token is in `localStorage`.** A cross-site scripting bug could read it.
+  The frontend has no raw-HTML sinks and React escapes event text.
+  `HttpOnly` cookies would add CSRF handling and a "who am I" endpoint for little
+  gain here.
+- **No login rate limiting or lockout.** Every published port is bound to
+  `127.0.0.1`, so only someone already on the machine can reach the endpoint.
+- **No revocation.** Signing out clears the token in the browser; the token
+  itself stays valid until it expires, or the backend restarts with a random key.
+- **The producer and Kafka UI are not behind the login.** Only the backend and the
+  dashboard are.
+
 ## Events API
 
 The backend serves stored events from PostgreSQL. Interactive docs are at
@@ -558,13 +621,14 @@ A list response looks like this:
 }
 ```
 
-Errors use RFC 7807 problem details (`application/problem+json`): 404 for an
+Errors use RFC 7807 problem details (`application/problem+json`): 401 without a
+valid token, 403 for a `VIEWER` who tries a change, 404 for an
 unknown event id, 400 for an invalid parameter value, and 500 with a generic
 message for anything unexpected (details stay in the backend log).
 
 ```bash
-curl "http://localhost:8080/api/events?severity=CRITICAL&status=OPEN&q=signal&size=5"
-curl "http://localhost:8080/api/events/EVT-10001"
+curl -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/events?severity=CRITICAL&status=OPEN&q=signal&size=5"
+curl -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/events/EVT-10001"
 ```
 
 ## Incident status update
@@ -579,7 +643,7 @@ curl "http://localhost:8080/api/events/EVT-10001"
 
 ```bash
 curl -X PUT "http://localhost:8080/api/events/EVT-10001/status" \
-  -H "Content-Type: application/json" -d '{"status":"ACKNOWLEDGED"}'
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"status":"ACKNOWLEDGED"}'
 ```
 
 A successful change returns 200 with the updated event (same shape as
@@ -635,10 +699,10 @@ live state, and the recent events also load their rows from PostgreSQL.
 | `GET` | `/api/dashboard/recent-events?limit=20` | the most recently processed events, newest first; `limit` 1-50, default 20 |
 
 ```bash
-curl "http://localhost:8080/api/dashboard/summary"
-curl "http://localhost:8080/api/services"
-curl "http://localhost:8080/api/dashboard/timeline?minutes=15"
-curl "http://localhost:8080/api/dashboard/recent-events?limit=5"
+curl -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/dashboard/summary"
+curl -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/services"
+curl -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/dashboard/timeline?minutes=15"
+curl -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/dashboard/recent-events?limit=5"
 ```
 
 Summary:
@@ -687,7 +751,9 @@ The backend pushes changes over STOMP on a native WebSocket at `/ws`
 (`ws://localhost:8080/ws`, or `/ws` through the frontend on port 3000 and the
 Vite dev server, which both proxy it). Clients only subscribe; a `SEND` frame
 gets an `ERROR` frame and the connection is closed. Browsers must connect from
-the same origin as the page. The broker sends heart-beats every 10 seconds.
+the same origin as the page. The broker sends heart-beats every 10 seconds. The
+STOMP `CONNECT` frame must carry `Authorization: Bearer <token>`
+([Sign-in and roles](#sign-in-and-roles)).
 
 | Topic | When | Body |
 |---|---|---|
@@ -710,7 +776,9 @@ To see the handshake through nginx with the stack running:
 curl -i -N -H "Connection: Upgrade" -H "Upgrade: websocket"   -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ=="   -H "Origin: http://localhost:3000" http://localhost:3000/ws
 ```
 
-It answers `101 Switching Protocols`; with another `Origin` it answers `403`.
+It answers `101 Switching Protocols`; with another `Origin` it answers `403`. The
+handshake itself needs no token; a STOMP `CONNECT` without one gets an `ERROR`
+frame.
 
 ## Redis resilience
 
@@ -764,8 +832,8 @@ Try it with the stack running (in Git Bash, prefix `docker compose exec` with
 
 ```bash
 docker compose stop redis
-curl -s http://localhost:3000/api/dashboard/summary    # still 200, served from PostgreSQL
-curl -s -X PUT http://localhost:3000/api/events/<eventId>/status   -H "Content-Type: application/json" -d '{"status":"ACKNOWLEDGED"}'    # still 200
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:3000/api/dashboard/summary    # still 200, served from PostgreSQL
+curl -s -X PUT http://localhost:3000/api/events/<eventId>/status   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"status":"ACKNOWLEDGED"}'    # still 200
 docker compose logs backend | grep -E "Redis unavailable|Live state"
 docker compose start redis
 # within about a minute the log shows: Live state reconciled from Postgres
@@ -818,6 +886,7 @@ be reloaded or linked directly.
 
 | Route | Page |
 |---|---|
+| `/login` | the sign-in page; every other route redirects here until you are signed in |
 | `/` | redirects to `/dashboard` |
 | `/dashboard` | KPI cards, service health, severity and events-over-time charts, recent events |
 | `/events` | server-paginated events table with filters and search in the query string |
@@ -925,11 +994,13 @@ What this project deliberately does not solve, with links to the detail.
 
 **Scope**
 
-- **No authentication or authorization.** Every endpoint is open; this is a
-  local single-machine demo, not a hardened deployment. The database
-  credentials are local development defaults
+- **Login is a demo, not a hardened deployment.** Two fixed accounts, a token in
+  `localStorage`, no revocation, lockout or rate limiting, and the producer and
+  Kafka UI are not behind it
+  ([Sign-in and roles](#sign-in-and-roles)). The database credentials are local
+  development defaults
   ([Configuration and credentials](#configuration-and-credentials)).
-- **Not built:** user login, distributed tracing, continuous deployment and
+- **Not built:** user management, distributed tracing, continuous deployment and
   Kubernetes manifests. CI runs tests and builds only
   ([Continuous integration](#continuous-integration)).
 - **Performance figures are single local observations**, not benchmarks

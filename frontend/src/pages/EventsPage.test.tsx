@@ -4,7 +4,9 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { HIGHLIGHT_MS, _clearHighlightsForTests } from '../lib/highlights'
 import { createFakeLiveConnection } from '../test/fakeLiveConnection'
+import { getSession } from '../lib/session'
 import { renderApp } from '../test/renderApp'
+import { sessionFor } from '../test/sessions'
 import type { DashboardSummary, IncidentEvent } from '../types/dashboard'
 import type { EventPage } from '../types/events'
 
@@ -264,6 +266,40 @@ describe('event detail drawer', () => {
     await userEvent.click(await screen.findByRole('link', { name: 'EVT-2' }))
     const drawer = await screen.findByRole('dialog', { name: 'EVT-2' })
     expect(await within(drawer).findByText('train-tracking')).toBeInTheDocument()
+  })
+})
+
+describe('roles', () => {
+  it('gives a VIEWER a read-only note instead of status buttons', async () => {
+    stubApi()
+    renderApp('/events/EVT-1', undefined, undefined, sessionFor('VIEWER'))
+
+    const drawer = await screen.findByRole('dialog', { name: 'EVT-1' })
+    expect(await within(drawer).findByText(/Read-only access/)).toBeInTheDocument()
+    expect(within(drawer).queryByRole('button', { name: /Acknowledge|Resolve|Reopen/ })).not.toBeInTheDocument()
+    expect(within(drawer).getByText('signal-service')).toBeInTheDocument()
+  })
+
+  it('gives an ADMIN the status buttons', async () => {
+    stubApi()
+    renderApp('/events/EVT-1')
+
+    const drawer = await screen.findByRole('dialog', { name: 'EVT-1' })
+    expect(await within(drawer).findByRole('button', { name: 'Acknowledge' })).toBeInTheDocument()
+    expect(within(drawer).queryByText(/Read-only access/)).not.toBeInTheDocument()
+  })
+
+  it('rolls back and explains a 403, and stays signed in', async () => {
+    stubApi({ status: () => problem(403, 'This action requires the ADMIN role') })
+    renderApp('/events/EVT-1')
+
+    const drawer = await screen.findByRole('dialog', { name: 'EVT-1' })
+    await userEvent.click(await within(drawer).findByRole('button', { name: 'Acknowledge' }))
+
+    expect(await screen.findByText('This action requires the ADMIN role')).toBeInTheDocument()
+    expect(await within(drawer).findByRole('button', { name: 'Acknowledge' })).toBeEnabled()
+    expect(within(drawer).getByText('OPEN')).toBeInTheDocument()
+    expect(getSession()).not.toBeNull()
   })
 })
 

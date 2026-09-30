@@ -7,12 +7,15 @@ http://localhost:8080/v3/api-docs (both served by the backend). Back to the
 [README](../README.md).
 
 Every `curl` example below was run against the local stack and the responses are
-real, shortened only where noted. There is no authentication and no CORS
-configuration; the dashboard reaches the API through nginx on the same origin.
+real, shortened only where noted. Every `/api/**` call needs a bearer token (see
+[Authentication](#authentication)); the examples assume `TOKEN` is set as shown
+there. There is no CORS configuration; the dashboard reaches the API through
+nginx on the same origin.
 
 ## Contents
 
 - [Base URLs](#base-urls)
+- [Authentication](#authentication) - [login](#post-apiauthlogin), [roles](#roles)
 - [Errors](#errors)
 - [Events](#events) - [list](#get-apievents), [detail](#get-apieventseventid), [status change](#put-apieventseventidstatus)
 - [Dashboard](#dashboard) - [summary](#get-apidashboardsummary), [services](#get-apiservices), [timeline](#get-apidashboardtimeline), [recent events](#get-apidashboardrecent-events)
@@ -29,6 +32,90 @@ configuration; the dashboard reaches the API through nginx on the same origin.
 | Dashboard (nginx) | http://localhost:3000 | Proxies only `/api/**` and `/ws` to the backend; every other path returns the dashboard's `index.html`, so use the backend port for Actuator and Swagger UI. |
 
 The examples use the backend on port 8080.
+
+## Authentication
+
+Every `/api/**` request needs `Authorization: Bearer <token>`. Get a token from
+the login endpoint with one of the two demo accounts, then send it on each call:
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"RailOps#Admin2026"}' | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+```
+
+### POST /api/auth/login
+
+Public. The body is `{"username": "...", "password": "..."}`; both are required,
+the username is at most 50 characters and the password at most 72.
+
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiJ9...",
+  "tokenType": "Bearer",
+  "username": "admin",
+  "role": "ADMIN",
+  "expiresAt": "2026-09-30T15:56:08Z"
+}
+```
+
+(The token is shortened here.)
+
+`token` is a signed JWT (HS256) with claims `sub` (the username), `role`, `iat`
+and `exp`. It is valid for 8 hours; `expiresAt` is the same instant as `exp`.
+
+| Request | Result |
+|---|---|
+| valid credentials | 200, as above |
+| wrong password, or an unknown username | 401 `Invalid credentials`, `Invalid username or password` (the same answer for both) |
+| a blank or missing field, or one over its length limit | 400 `Invalid request`, naming the field |
+| no body, or one that is not JSON | 400 `Invalid request`, `request body must be JSON like {"username":"...","password":"..."}` |
+
+### Roles
+
+| Request | No token, or an invalid or expired one | `VIEWER` | `ADMIN` |
+|---|---|---|---|
+| `POST /api/auth/login` | allowed | allowed | allowed |
+| `GET /actuator/health`, `GET /actuator/prometheus` | allowed | allowed | allowed |
+| `GET /swagger-ui/**`, `GET /v3/api-docs` | allowed | allowed | allowed |
+| `GET /api/**` (events, dashboard, services) | 401 | 200 | 200 |
+| any other method under `/api/**`, i.e. `PUT /api/events/{eventId}/status` | 401 | 403 | 200 |
+| any other path | 401 | 401 or 404 | 401 or 404 |
+
+`/ws` is open at the HTTP level, because a browser cannot put a header on a
+WebSocket handshake; the token goes in the STOMP `CONNECT` frame instead
+([Real-time push](#real-time-push-stomp-over-websocket)).
+
+The 401 and 403 answers are problem details like every other error. The 401
+never says why the token was refused (missing, malformed, expired or signed with
+another key) and carries `WWW-Authenticate: Bearer`:
+
+```json
+{
+  "type": "about:blank",
+  "title": "Unauthorized",
+  "status": 401,
+  "detail": "Sign in to continue"
+}
+```
+
+A `VIEWER` who tries a change gets a 403:
+
+```json
+{
+  "type": "about:blank",
+  "title": "Forbidden",
+  "status": 403,
+  "detail": "This action requires the ADMIN role"
+}
+```
+
+The token is signed with the key in `AUTH_JWT_SECRET`. When that is unset the
+backend generates a random key at every start, so a restart invalidates all
+tokens; the dashboard then sends you back to the sign-in page. Set the variable
+in `.env` to keep sessions across restarts (see
+[Configuration and credentials](../README.md#configuration-and-credentials)).
+In Swagger UI, choose **Authorize** and paste the `token` value.
 
 ## Errors
 
@@ -51,6 +138,8 @@ rejected value. `type` is `about:blank` except for status conflicts (below).
 | Status | When | `title` |
 |---|---|---|
 | 400 | a query parameter or body field fails validation, is the wrong type, or is not one of the allowed values | `Invalid query` (parameters) or `Invalid request` (body) |
+| 401 | no token, or an invalid or expired one (any `/api/**` path except login) | `Unauthorized`; `Invalid credentials` for a failed login |
+| 403 | a `VIEWER` tried a change | `Forbidden` |
 | 404 | the event does not exist, or the path is not an endpoint | `Event not found` or `Not Found` |
 | 405 / 415 | wrong HTTP method, or a body that is not `application/json` | `Method Not Allowed` / `Unsupported Media Type` |
 | 409 | a status change the state machine forbids, or a write that raced another request | `Invalid status transition` / `Concurrent update` |
@@ -99,7 +188,7 @@ A filtered, sorted, paginated list.
 Filters combine with AND. The response is a stable page envelope:
 
 ```bash
-curl -s "http://localhost:8080/api/events?severity=CRITICAL&status=OPEN&size=2&sort=timestamp,desc"
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/events?severity=CRITICAL&status=OPEN&size=2&sort=timestamp,desc"
 ```
 
 ```json
@@ -121,11 +210,11 @@ curl -s "http://localhost:8080/api/events?severity=CRITICAL&status=OPEN&size=2&s
 More examples:
 
 ```bash
-curl -s "http://localhost:8080/api/events?q=signal&service=signal-service&size=1&sort=eventId,asc"   # 200
-curl -s "http://localhost:8080/api/events?size=0"          # 400 "size must be between 1 and 100"
-curl -s "http://localhost:8080/api/events?severity=SEVERE" # 400 "severity must be one of INFO, WARNING, MAJOR, CRITICAL"
-curl -s "http://localhost:8080/api/events?sort=status"     # 400 "sort must be field or field,asc|desc with field one of eventId, receivedAt, service, source, timestamp"
-curl -s "http://localhost:8080/api/events?page=x"          # 400 "page must be a whole number"
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/events?q=signal&service=signal-service&size=1&sort=eventId,asc"   # 200
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/events?size=0"          # 400 "size must be between 1 and 100"
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/events?severity=SEVERE" # 400 "severity must be one of INFO, WARNING, MAJOR, CRITICAL"
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/events?sort=status"     # 400 "sort must be field or field,asc|desc with field one of eventId, receivedAt, service, source, timestamp"
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/events?page=x"          # 400 "page must be a whole number"
 ```
 
 ### GET /api/events/{eventId}
@@ -133,9 +222,9 @@ curl -s "http://localhost:8080/api/events?page=x"          # 400 "page must be a
 One event, in the shape shown above. An unknown ID is a 404.
 
 ```bash
-ID=$(curl -s "http://localhost:8080/api/events?size=1" | grep -o '"eventId":"[^"]*"' | head -1 | cut -d'"' -f4)
-curl -s "http://localhost:8080/api/events/$ID"                 # 200, the event
-curl -s "http://localhost:8080/api/events/EVT-does-not-exist"  # 404
+ID=$(curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/events?size=1" | grep -o '"eventId":"[^"]*"' | head -1 | cut -d'"' -f4)
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/events/$ID"                 # 200, the event
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/events/EVT-does-not-exist"  # 404
 ```
 
 ```json
@@ -160,9 +249,9 @@ would have been allowed. Redis counters are updated and an `UPDATED` message is
 pushed on success (see [Incident status update](../README.md#incident-status-update)).
 
 ```bash
-curl -s -X PUT "http://localhost:8080/api/events/$ID/status" \
+curl -s -X PUT -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/events/$ID/status" \
   -H 'Content-Type: application/json' -d '{"status":"ACKNOWLEDGED"}'   # 200, status now ACKNOWLEDGED
-curl -s -X PUT "http://localhost:8080/api/events/$ID/status" \
+curl -s -X PUT -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/events/$ID/status" \
   -H 'Content-Type: application/json' -d '{"status":"OPEN"}'           # 409
 ```
 
@@ -203,7 +292,7 @@ Totals, severity distribution and each service's health. Cached for up to
 events.
 
 ```bash
-curl -s http://localhost:8080/api/dashboard/summary
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/dashboard/summary
 ```
 
 ```json
@@ -230,7 +319,7 @@ that had just received large test bursts, which is why every service is `DOWN`.
 Every known service, sorted by name, with its live state.
 
 ```bash
-curl -s http://localhost:8080/api/services
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/services
 ```
 
 ```json
@@ -254,7 +343,7 @@ with the current minute; minutes without events are present with zero counts.
 | `minutes` | `60` | window length, 1 to 120 |
 
 ```bash
-curl -s "http://localhost:8080/api/dashboard/timeline?minutes=3"
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/dashboard/timeline?minutes=3"
 ```
 
 ```json
@@ -278,7 +367,7 @@ them (not sorted by `timestamp`). Each item has the event shape from
 | `limit` | `20` | 1 to 50 |
 
 ```bash
-curl -s "http://localhost:8080/api/dashboard/recent-events?limit=1"
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/dashboard/recent-events?limit=1"
 ```
 
 ```json
@@ -304,7 +393,11 @@ curl -s "http://localhost:8080/api/dashboard/recent-events?limit=1"
 The backend serves STOMP 1.2 over a plain WebSocket (no SockJS) at `/ws`:
 `ws://localhost:8080/ws`, or `ws://localhost:3000/ws` through nginx. Clients only
 subscribe; a `SEND` frame is rejected with an `ERROR` frame
-(`Clients can only subscribe`). Both sides send heartbeats every 10 seconds. The
+(`Clients can only subscribe`). The `CONNECT` frame must carry
+`Authorization: Bearer <token>`; without a valid one the server answers with an
+`ERROR` frame and closes the connection. A token that expires while a socket is
+open is not re-checked, so the connection lives until it closes and the next
+reconnect needs a valid token. Both sides send heartbeats every 10 seconds. The
 handshake keeps Spring's default same-origin check, so a browser page must be
 served from the same origin (the dashboard is, through nginx). Delivery is best
 effort: nothing is sent on subscribe and missed messages are not replayed
@@ -337,7 +430,8 @@ frame for five seconds:
 
 ```js
 const ws = new WebSocket('ws://localhost:8080/ws');
-ws.onopen = () => ws.send('CONNECT\naccept-version:1.2\nheart-beat:10000,10000\n\n\0');
+ws.onopen = () =>
+  ws.send(`CONNECT\naccept-version:1.2\nheart-beat:10000,10000\nAuthorization:Bearer ${process.env.TOKEN}\n\n\0`);
 ws.onmessage = (m) => {
   console.log(String(m.data));
   if (String(m.data).startsWith('CONNECTED')) {
@@ -348,7 +442,7 @@ ws.onmessage = (m) => {
 setTimeout(() => process.exit(0), 5000);
 ```
 
-Save it as `watch.mjs`, run `node watch.mjs`, and trigger events with
+Save it as `watch.mjs`, run it with `TOKEN` exported (`TOKEN=... node watch.mjs`), and trigger events with
 `curl -X POST "http://localhost:8082/produce?count=3"` in another terminal.
 
 ## Producer
@@ -396,7 +490,7 @@ failures.
 |---|---|---|
 | `GET /actuator/health` | backend `:8080`, producer `:8082` | `{"status":"UP"}`; used by the Compose healthchecks |
 | `GET /actuator/prometheus` | backend, producer | Prometheus text format; metric names are listed in [Observability](../README.md#observability) |
-| `GET /actuator` | backend, producer | index of the exposed endpoints |
+| `GET /actuator` | backend, producer | index of the exposed endpoints (the backend asks for a token here; only the two rows above are public) |
 | `GET /swagger-ui/index.html`, `GET /v3/api-docs` | backend | generated API reference (see the top of this page) |
 
 The backend and the producer expose only `health` and `prometheus` from Actuator.

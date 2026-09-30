@@ -21,11 +21,15 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.data.redis.RedisConnectionFailureException;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(DashboardController.class)
+@Import(SecurityConfig.class)
+@WithMockUser(roles = "ADMIN")
 class DashboardControllerTest {
 
     private static final Instant TIME = Instant.parse("2026-09-27T12:30:05.123Z");

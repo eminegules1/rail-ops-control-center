@@ -1,3 +1,5 @@
+import { endSession, getSession } from '../lib/session'
+
 /** A non-2xx API response; `message` is the ProblemDetail detail when the backend sent one. */
 export class ApiError extends Error {
   readonly status: number
@@ -31,8 +33,15 @@ export async function sendJson<T>(url: string, method: 'POST' | 'PUT', body: unk
 }
 
 async function request<T>(url: string, init: RequestInit): Promise<T> {
-  const response = await fetch(url, init)
+  const token = getSession()?.token
+  const response = await fetch(
+    url,
+    token ? { ...init, headers: { ...init.headers, Authorization: `Bearer ${token}` } } : init,
+  )
   if (!response.ok) {
+    // A 401 to a request that carried this session's token means the token is no longer accepted. A 403 keeps the
+    // session: the user is signed in but not allowed to do that.
+    if (response.status === 401 && token && getSession()?.token === token) endSession('expired')
     throw new ApiError(response.status, await errorMessage(response))
   }
   return (await response.json()) as T

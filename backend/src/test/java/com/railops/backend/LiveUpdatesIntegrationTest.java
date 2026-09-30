@@ -14,6 +14,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -68,6 +69,14 @@ class LiveUpdatesIntegrationTest {
     private ObjectMapper json;
 
     private final List<StompSession> sessions = new ArrayList<>();
+
+    private String adminToken;
+
+    @BeforeEach
+    void signIn() {
+        TestAuth.signInAsAdmin(rest);
+        adminToken = TestAuth.login(rest, "admin", "RailOps#Admin2026");
+    }
 
     @AfterEach
     void disconnect() {
@@ -144,6 +153,26 @@ class LiveUpdatesIntegrationTest {
         assertThat(connect(origin("http://localhost:" + port)).isConnected()).isTrue();
     }
 
+    @Test
+    void refusesAConnectWithoutALoginToken() throws Exception {
+        BlockingQueue<StompHeaders> errors = new LinkedBlockingQueue<>();
+
+        assertThatThrownBy(() -> connect(new WebSocketHttpHeaders(), new StompSessionHandlerAdapter() {
+            @Override
+            public void handleFrame(StompHeaders headers, Object payload) {
+                errors.add(headers);
+            }
+        }, null)).isInstanceOf(ExecutionException.class);
+
+        assertThat(errors.poll(5, TimeUnit.SECONDS)).isNotNull();
+    }
+
+    @Test
+    void refusesAConnectWithAnInvalidLoginToken() {
+        assertThatThrownBy(() -> connect(new WebSocketHttpHeaders(), new StompSessionHandlerAdapter() {
+        }, "not.a.jwt")).isInstanceOf(ExecutionException.class);
+    }
+
     private static WebSocketHttpHeaders origin(String origin) {
         WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
         headers.setOrigin(origin);
@@ -165,11 +194,20 @@ class LiveUpdatesIntegrationTest {
     }
 
     private StompSession connect(WebSocketHttpHeaders headers, StompSessionHandlerAdapter handler) throws Exception {
+        return connect(headers, handler, adminToken);
+    }
+
+    private StompSession connect(WebSocketHttpHeaders headers, StompSessionHandlerAdapter handler, String token)
+            throws Exception {
+        StompHeaders connectHeaders = new StompHeaders();
+        if (token != null) {
+            connectHeaders.add("Authorization", "Bearer " + token);
+        }
         WebSocketStompClient client = new WebSocketStompClient(new StandardWebSocketClient());
         MappingJackson2MessageConverter converter = new MappingJackson2MessageConverter();
         converter.setObjectMapper(json);
         client.setMessageConverter(converter);
-        StompSession session = client.connectAsync("ws://localhost:" + port + "/ws", headers, handler)
+        StompSession session = client.connectAsync("ws://localhost:" + port + "/ws", headers, connectHeaders, handler)
                 .get(10, TimeUnit.SECONDS);
         sessions.add(session);
         return session;

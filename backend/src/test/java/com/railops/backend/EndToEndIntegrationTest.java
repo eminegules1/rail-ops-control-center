@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability;
@@ -76,6 +77,11 @@ class EndToEndIntegrationTest {
 
     @Autowired
     private ReconcileState reconcileState;
+
+    @BeforeEach
+    void signIn() {
+        TestAuth.signInAsAdmin(rest);
+    }
 
     @Test
     void happyPathEventsFlowFromKafkaToTheApiAndStatusChangesAreReflected() throws Exception {
