@@ -96,45 +96,58 @@ docker compose down -v        # stop and DELETE all data (Kafka, Redis, Postgres
 ## Architecture
 
 ```mermaid
-flowchart LR
-    Browser["Browser<br/>React dashboard"]
-    Nginx["frontend (nginx)<br/>:3000"]
-
-    subgraph Stack["docker compose"]
-        Producer["producer<br/>:8082"]
-        Kafka[("Kafka<br/>incident-events<br/>3 partitions, key = service")]
-        DLT[("incident-events.DLT")]
-
-        subgraph Backend["backend :8080"]
-            Listener["Kafka listener<br/>group incident-processor<br/>3 threads, manual ack"]
-            Services["ingestion and status services"]
-            Rest["REST API /api/**<br/>Swagger UI"]
-            Ws["STOMP /ws<br/>/topic/events, /topic/summary"]
-            Reconciler["live-state reconciler"]
-        end
-
-        Jaeger["jaeger<br/>:16686<br/>in-memory traces"]
-        Postgres[("PostgreSQL<br/>events table<br/>source of truth")]
-        Redis[("Redis<br/>live state and summary cache")]
+flowchart TD
+    %% Client Tier
+    subgraph UI ["User Interface (Frontend)"]
+        Browser["Browser<br/>React dashboard"]
+        Nginx["frontend (nginx)<br/>:3000"]
+        Browser <-->|"HTTP & WebSocket"| Nginx
     end
 
-    Producer -->|"JSON events"| Kafka
-    Kafka --> Listener
-    Listener -->|"invalid or retries exhausted"| DLT
+    %% Ingestion Pipeline
+    subgraph Ingest ["Event Ingestion Pipeline"]
+        Producer["producer<br/>:8082"]
+        Kafka[("Kafka: incident-events<br/>3 partitions, key = service")]
+        DLT[("incident-events.DLT<br/>Dead-letter topic")]
+        Producer -->|"JSON events"| Kafka
+        Kafka -.->|"invalid or retries exhausted"| DLT
+    end
+
+    %% Application Tier
+    subgraph Backend ["backend :8080 (Spring Boot)"]
+        Listener["Kafka listener<br/>group incident-processor<br/>3 threads, manual ack"]
+        Services["Ingestion & status services<br/>Idempotency & Lua updates"]
+        Rest["REST API /api/**<br/>Swagger UI"]
+        Ws["STOMP WebSocket /ws<br/>/topic/events, /topic/summary"]
+        Reconciler["Live-state reconciler"]
+    end
+
+    %% Storage & Observability Tier
+    subgraph Storage ["Persistence & Observability"]
+        Postgres[("PostgreSQL (:5432)<br/>events table<br/>Source of truth")]
+        Redis[("Redis (:6379)<br/>Live state & summary counters")]
+        Jaeger["Jaeger (:16686)<br/>Distributed traces"]
+    end
+
+    %% Cross-Tier Connections
+    Nginx -->|"/api/**"| Rest
+    Nginx <-->|"/ws"| Ws
+
+    Kafka -->|"consume events"| Listener
     Listener --> Services
     Services -->|"insert if absent"| Postgres
     Services -->|"Lua scripts, circuit breaker"| Redis
-    Services -->|"changes"| Ws
-    Rest -->|"events list and detail"| Postgres
-    Rest -->|"dashboard reads"| Redis
+    Services -->|"real-time push"| Ws
+
+    Rest -->|"events list & detail"| Postgres
+    Rest -->|"dashboard summary"| Redis
     Rest -.->|"fallback when Redis is down"| Postgres
-    Postgres -.->|"rebuild"| Reconciler
-    Reconciler -.-> Redis
+
+    Postgres -.->|"startup scan"| Reconciler
+    Reconciler -.->|"rebuild cache"| Redis
+
     Producer -.->|"OTLP spans"| Jaeger
     Backend -.->|"OTLP spans"| Jaeger
-    Browser --> Nginx
-    Nginx -->|"/api"| Rest
-    Nginx -->|"/ws"| Ws
 ```
 
 **Ingest path.** The producer publishes JSON events to `incident-events`, keyed
