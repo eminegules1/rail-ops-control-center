@@ -8,6 +8,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import javax.crypto.SecretKey;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
@@ -20,7 +21,10 @@ import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 
 class TokenServiceTest {
 
-    private static final Instant NOW = Instant.parse("2026-09-30T10:00:00.789Z");
+    // Relative to the real clock: the decoder checks expiry against it, so a fixed date would eventually expire.
+    // The 789 ms checks that issuing truncates to whole seconds.
+    private static final Instant WHOLE_SECOND = Instant.now().truncatedTo(ChronoUnit.SECONDS);
+    private static final Instant NOW = WHOLE_SECOND.plusMillis(789);
 
     private final SecretKey key = SigningKey.resolve("k".repeat(32));
     private final JwtDecoder decoder = NimbusJwtDecoder.withSecretKey(key).macAlgorithm(MacAlgorithm.HS256).build();
@@ -32,7 +36,7 @@ class TokenServiceTest {
         Jwt token = decoder.decode(issued.value());
         assertThat(token.getSubject()).isEqualTo("admin");
         assertThat(token.<String>getClaim("role")).isEqualTo("ADMIN");
-        assertThat(token.getIssuedAt()).isEqualTo(Instant.parse("2026-09-30T10:00:00Z"));
+        assertThat(token.getIssuedAt()).isEqualTo(WHOLE_SECOND);
         assertThat(Duration.between(token.getIssuedAt(), token.getExpiresAt())).isEqualTo(TokenService.LIFETIME);
         assertThat(issued.expiresAt()).isEqualTo(token.getExpiresAt());
     }
