@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatDateTime, formatMinute, formatTime } from './format'
+import { formatCount, formatDateTime, formatMinute, formatTime } from './format'
 
 describe('formatTime', () => {
   it('formats an ISO time as local HH:mm:ss', () => {
@@ -26,5 +26,19 @@ describe('formatDateTime', () => {
 
   it('includes the seconds of a valid time', () => {
     expect(formatDateTime('2026-09-27T12:30:05Z')).toContain('05')
+  })
+})
+
+describe('formatCount', () => {
+  it('groups thousands with commas whatever the process locale', () => {
+    expect(formatCount(100197)).toBe('100,197')
+    expect(formatCount(50097)).toBe('50,097')
+  })
+})
+
+describe('pinned locale', () => {
+  it('uses a 24 hour clock and an English month name', () => {
+    expect(formatTime('2026-09-27T23:30:05Z')).toMatch(/^\d{2}:\d{2}:05$/)
+    expect(formatDateTime('2026-09-30T12:00:00Z')).toMatch(/^30 Sept 2026, \d{2}:\d{2}:\d{2}$/)
   })
 })

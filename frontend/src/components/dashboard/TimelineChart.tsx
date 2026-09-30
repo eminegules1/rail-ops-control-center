@@ -3,6 +3,7 @@ import { Area, AreaChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, X
 import { TIMELINE_MINUTES, useTimeline } from '../../api/dashboard'
 import { timelineTotal, toTimelineRows } from '../../lib/chartData'
 import { SEVERITY_COLORS } from '../../lib/colors'
+import { formatCount } from '../../lib/format'
 import { SEVERITIES } from '../../types/dashboard'
 import type { Severity } from '../../types/dashboard'
 import { EmptyState, Panel } from './Panel'
@@ -42,8 +43,12 @@ export function TimelineChart() {
             <AreaChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
               <CartesianGrid vertical={false} stroke="var(--mui-palette-divider)" />
               <XAxis dataKey="label" tick={AXIS_TICK} interval="preserveStartEnd" minTickGap={24} />
-              <YAxis allowDecimals={false} tick={AXIS_TICK} width={40} />
-              <Tooltip cursor={{ stroke: 'var(--mui-palette-divider)' }} itemSorter={bySeverity} />
+              <YAxis allowDecimals={false} tick={AXIS_TICK} width={52} tickFormatter={formatCount} />
+              <Tooltip
+                cursor={{ stroke: 'var(--mui-palette-divider)' }}
+                itemSorter={bySeverity}
+                formatter={(value) => formatCount(Number(value))}
+              />
               <Legend wrapperStyle={{ fontSize: 12 }} itemSorter={bySeverity} formatter={legendLabel} />
               {STACK_ORDER.map((severity) => (
                 <Area

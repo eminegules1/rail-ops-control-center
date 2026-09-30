@@ -1,17 +1,20 @@
-const timeFormat = new Intl.DateTimeFormat(undefined, {
+// The UI copy is English only, so numbers and dates must not follow the browser locale.
+const LOCALE = 'en-GB'
+
+const timeFormat = new Intl.DateTimeFormat(LOCALE, {
   hour: '2-digit',
   minute: '2-digit',
   second: '2-digit',
   hour12: false,
 })
 
-const minuteFormat = new Intl.DateTimeFormat(undefined, {
+const minuteFormat = new Intl.DateTimeFormat(LOCALE, {
   hour: '2-digit',
   minute: '2-digit',
   hour12: false,
 })
 
-const dateTimeFormat = new Intl.DateTimeFormat(undefined, {
+const dateTimeFormat = new Intl.DateTimeFormat(LOCALE, {
   dateStyle: 'medium',
   timeStyle: 'medium',
   hour12: false,
@@ -40,6 +43,8 @@ export function formatDateTime(iso: string | null | undefined): string {
   return date ? dateTimeFormat.format(date) : '—'
 }
 
+const countFormat = new Intl.NumberFormat(LOCALE)
+
 export function formatCount(value: number): string {
-  return value.toLocaleString()
+  return countFormat.format(value)
 }

@@ -97,7 +97,7 @@ describe('dashboard page', () => {
     renderApp('/dashboard')
 
     const total = screen.getByRole('region', { name: 'Total events' })
-    expect(await within(total).findByText((1234).toLocaleString())).toBeInTheDocument()
+    expect(await within(total).findByText('1,234')).toBeInTheDocument()
     expect(within(screen.getByRole('region', { name: 'Open' })).getByText('120')).toBeInTheDocument()
     expect(within(screen.getByRole('region', { name: 'Critical' })).getByText('12')).toBeInTheDocument()
 
@@ -134,7 +134,7 @@ describe('dashboard page', () => {
     act(() => live.simulateSummaryMessage(JSON.stringify(populated.summary)))
 
     // React Query's notifyManager batches cache-update notifications on a real timer, not a microtask.
-    await waitFor(() => expect(within(total).getByText((1234).toLocaleString())).toBeInTheDocument())
+    await waitFor(() => expect(within(total).getByText('1,234')).toBeInTheDocument())
     expect(within(screen.getByRole('region', { name: 'Open' })).getByText('120')).toBeInTheDocument()
   })
 

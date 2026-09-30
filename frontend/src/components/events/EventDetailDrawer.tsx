@@ -30,6 +30,7 @@ export function EventDetailDrawer({ eventId, onClose, ...statusCallbacks }: Prop
       anchor="right"
       open={eventId !== undefined}
       onClose={onClose}
+      sx={(theme) => ({ zIndex: theme.zIndex.drawer + 2 })}
       slotProps={{ paper: { role: 'dialog', 'aria-modal': true, 'aria-labelledby': titleId } }}
     >
       <Box sx={{ width: { xs: '100vw', sm: 440 }, p: 2 }}>

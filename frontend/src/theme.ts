@@ -12,6 +12,7 @@ export const theme = createTheme({
     h2: { fontSize: '1rem', fontWeight: 600 },
   },
   components: {
+    MuiCssBaseline: { styleOverrides: { html: { scrollbarGutter: 'stable' } } },
     MuiCard: { defaultProps: { variant: 'outlined' } },
     MuiPaper: { defaultProps: { elevation: 0 } },
   },

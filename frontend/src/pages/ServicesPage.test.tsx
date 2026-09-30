@@ -74,8 +74,8 @@ describe('services page', () => {
     expect(cells.map((cell) => cell.textContent)).toEqual([
       'signal-service',
       'DOWN',
-      (1234).toLocaleString(),
-      (1300).toLocaleString(),
+      '1,234',
+      '1,300',
       'CRITICAL',
       expect.stringMatching(/\d{2}:\d{2}:\d{2}/),
     ])
