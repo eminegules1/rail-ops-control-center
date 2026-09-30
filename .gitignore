@@ -48,6 +48,3 @@ Thumbs.db
 
 # Local Claude Code settings (per-machine, not project workflow config)
 .claude/settings.json
-
-# Assignment brief (RESTRICTED, never commit)
-Candidate_Technical_Assignment_Alstom.pdf

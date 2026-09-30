@@ -195,7 +195,7 @@ e.g. `?severity=CRITICAL&status=OPEN&q=signal&page=2`, so they survive refresh a
   Docker Compose, a sufficient README, event filtering, status updates.
 - The dev machine is Windows 10 with Docker Desktop. Everything must also start on a clean clone with one command.
 - Auth is not required for the MVP.
-- The assignment brief is RESTRICTED: it stays out of the repo (gitignored), and its text and rubric are never
-  copied into the README or docs.
+- The assignment brief is confidential: it stays out of the repo, and its text and rubric are never copied into
+  the README or docs.
 - Interview readiness: only build what can be explained in the interview; prefer the simpler design when it
   earns the same score.

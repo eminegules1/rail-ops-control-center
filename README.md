@@ -554,6 +554,23 @@ in; their credentials are local demo values, like the database password.
 | `admin` | `RailOps#Admin2026` | `ADMIN` | everything, including acknowledging, resolving and reopening incidents |
 | `viewer` | `RailOps#Viewer2026` | `VIEWER` | read everything; the Events page shows a read-only note instead of the status buttons, and `PUT /api/events/{eventId}/status` answers 403 |
 
+**The sign-in page** (`/login`) is split in two. From 900 px wide the left half
+shows the product name over a looping, muted background video; below that width
+the video is not loaded at all and only the form is shown. The form checks that
+both fields are filled before it sends anything and moves focus to the first
+empty one. A wrong username or password shows "Invalid username or password",
+clears the password field and puts focus back in it; a network or server failure
+shows "Couldn't reach the server. Try again." If your session ended because the
+token expired, the page says so above the form. Someone who is already signed in
+is sent straight to the dashboard.
+
+**Who is signed in** is shown in the top bar as a role badge: a green `ADMIN`
+badge with a shield, or a blue `VIEWER` badge with an eye. Clicking it opens a
+small "Access control & role" panel that describes both roles, marks yours with a
+check and shows the username. It is information only; the role comes from the
+account and cannot be changed here. The **Sign out** button next to it ends the
+session and returns to the sign-in page.
+
 `POST /api/auth/login` with `{"username":"...","password":"..."}` returns a
 bearer token. To call the API from a terminal:
 
@@ -1000,7 +1017,8 @@ highlighted for 3 seconds. If the backend is unreachable, each section keeps its
 last data or shows its error state, and a single "Can't reach the backend -
 retrying" message appears on the first failed request (within a few seconds) and
 stays open until the API answers again. The top bar has a Light / Dark / System
-theme switch; the choice is remembered in the browser.
+theme switch; the choice is remembered in the browser. Next to it are your role
+badge and the Sign out button (see [Sign-in and roles](#sign-in-and-roles)).
 
 The events page keeps its state in the URL, so any view can be reloaded,
 bookmarked or shared: severity, status, source and service filters, the search
@@ -1095,6 +1113,11 @@ What this project deliberately does not solve, with links to the detail.
   loses them on restart, its UI is not behind the login, the browser is not
   instrumented, and PostgreSQL, Redis, WebSocket pushes and the dead-letter publish
   are not traced ([Distributed tracing](#distributed-tracing)).
+- **The sign-in video has no pause control.** It autoplays and loops beside the
+  form, so someone who needs to stop moving content can only do so through their
+  operating system's reduced-motion setting. That setting hides the video, but the
+  browser may still download its 3.3 MB file. Below 900 px wide it is not loaded
+  ([Sign-in and roles](#sign-in-and-roles)).
 - **Not built:** user management, continuous deployment and
   Kubernetes manifests. CI runs tests and builds, and publishes the three images
   to GHCR on `main`, but nothing deploys them

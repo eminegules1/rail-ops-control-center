@@ -1,6 +1,6 @@
 # Alstom Rail Operations Control Center - Project Overview
 
-<!-- blueprint:source-hash 5df4ea771cce4986117dffa6cb49849c5e677a4ae91668c8d51969234532542a -->
+<!-- blueprint:source-hash bd14f2fcf524ca4517c5ea1cd0dbc179c2b4e11693fb5e1de6f40c2c184b1c1c -->
 
 > Real-time railway operations and mobility incident monitoring: Kafka event
 > pipeline, Redis live state, PostgreSQL history, and a live React dashboard.
@@ -35,7 +35,7 @@ to an assignment area and show production-minded engineering.
   status updates.
 - Dev machine is Windows 10 + Docker Desktop; a clean clone must start with one
   command.
-- The assignment brief is RESTRICTED: never commit it (it is gitignored) and
+- The assignment brief is confidential: keep it out of the repo and
   never copy its text or rubric into the README or docs.
 - Only build what can be explained in the interview; prefer the simpler design
   when it earns the same score.
