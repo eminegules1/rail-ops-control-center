@@ -25,12 +25,17 @@ Redis live state, and a React dashboard shows service health and incidents live.
 
 ## Screenshots
 
-Captured from the running stack after several bursts of generated events, so
-every service shows `DOWN` and the counts are large. Times use the browser's locale.
+Captured from the running stack after several thousand generated events, signed in
+as `admin`. Every service shows `DOWN` and the counts are large because the demo
+producer keeps creating incidents and nobody resolves them: one unresolved
+`CRITICAL` incident is enough to mark a service `DOWN` (see
+[Live service state (Redis)](#live-service-state-redis)). Times use the browser's locale.
+
+![Sign-in page in dark mode: the brand video panel on the left and the sign-in form on the right](docs/images/login.png)
 
 ![Dashboard in light mode: totals, service health cards, severity distribution, events over time and recent events](docs/images/dashboard.png)
 
-![Events page with the detail drawer of one event open, showing its fields and a Reopen action](docs/images/events-detail.png)
+![Events page with the detail drawer of one event open, showing its fields and the Acknowledge and Resolve actions](docs/images/events-detail.png)
 
 ![Services page listing each service's health, open and active counts, latest severity and last event time](docs/images/services.png)
 
@@ -283,14 +288,15 @@ secrets need to be set up.
 
 | Image | Tags |
 |---|---|
-| `ghcr.io/<owner>/<repo>-producer` | `latest`, `sha-<short commit>` |
-| `ghcr.io/<owner>/<repo>-backend` | `latest`, `sha-<short commit>` |
-| `ghcr.io/<owner>/<repo>-frontend` | `latest`, `sha-<short commit>` |
+| `ghcr.io/eminegules1/rail-ops-control-center-producer` | `latest`, `sha-<short commit>` |
+| `ghcr.io/eminegules1/rail-ops-control-center-backend` | `latest`, `sha-<short commit>` |
+| `ghcr.io/eminegules1/rail-ops-control-center-frontend` | `latest`, `sha-<short commit>` |
 
-`<owner>/<repo>` is the lowercased repository path. To pull one:
+Each name is the lowercased repository path (`eminegules1/rail-ops-control-center`)
+plus `-producer`, `-backend` or `-frontend`. To pull one:
 
 ```bash
-docker pull ghcr.io/<owner>/<repo>-backend:latest
+docker pull ghcr.io/eminegules1/rail-ops-control-center-backend:latest
 ```
 
 A package GitHub creates this way is private until you change its visibility in
@@ -461,6 +467,9 @@ Known limitations:
 - A Redis outage no longer sends events to the DLT: the event is stored in
   PostgreSQL, the Redis update is skipped, and the live state is rebuilt from
   PostgreSQL when Redis returns (see [Redis resilience](#redis-resilience)).
+- **Event filters take one value each.** Severity, status, source and service each
+  accept a single value; filtering several at once (for example `CRITICAL` and
+  `MAJOR`) is a possible future change.
 
 Inspect stored events:
 
