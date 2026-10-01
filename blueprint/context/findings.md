@@ -258,7 +258,7 @@ recent list) into private methods that take the `RedisOperations`, keeping the
 single `multi()`/`exec()` pair where it is. No behavior change.
 **Resolution:**
 
-### F-22 [P3] open - Known limitations says images publish on main only, but the job also publishes on master
+### F-22 [P3] accepted - Known limitations says images publish on main only, but the job also publishes on master
 
 **File:** README.md:1099
 **Found:** 2026-09-30 by /audit (scope: current; lens: quality; independent review)
@@ -271,4 +271,26 @@ exists), so that line understates when images are published. Step 2's Done when 
 matches the workflow's triggers.
 **Suggested fix:** Change "to GHCR on `main`" to "to GHCR on pushes to `main` or
 `master`" in the Known limitations bullet. Docs only; no behavior change.
-**Resolution:**
+**Resolution:** Re-examined 2026-09-30 by /audit (scope: full; all lenses). Still open. The
+workflow continues to trigger on pushes to both `main` and `master`, while this
+README bullet still says images publish on `main` only.
+
+Accepted 2026-10-01 by the user's explicit decision in the current session; no further reason was given. The README "Not built" bullet keeps saying images publish "on `main`" while the workflow publishes on pushes to `main` or `master`.
+
+### F-23 [P2] accepted - Dashboard screenshot presents every service as DOWN
+
+**File:** docs/images/dashboard.png
+**Found:** 2026-09-30 by /audit (scope: full; all lenses)
+**Why it matters:** The README's first product screenshot is the main visual
+proof for the reviewer. It shows all six services as DOWN, 1,304 open events,
+and a large end-of-chart burst after a mostly flat hour. The README explains
+that the image was captured after generated bursts, but a reviewer scanning the
+README can reasonably read it as a broken or alarm-saturated dashboard. That
+undercuts the frontend and delivery criteria even though it proves the page has
+data.
+**Suggested fix:** Capture a second representative dashboard state with a
+credible mix of HEALTHY, DEGRADED and DOWN services, a moderate event count,
+and a chart that shows activity across the window. Keep this real output from
+the running app, and update the README caption so it explains the scenario.
+No current requirement is lost.
+**Resolution:** Accepted 2026-10-01 by the user's explicit decision in the current session; no further reason was given. The screenshots keep showing every service as `DOWN`; the README intro now says this is because the demo producer keeps creating incidents that nobody resolves.
