@@ -9,6 +9,9 @@ Real-time incident monitoring for a rail operations center: a producer publishes
 service events to Kafka, a Spring Boot backend processes them into PostgreSQL and
 Redis live state, and a React dashboard shows service health and incidents live.
 
+**Demo video:** [watch the walkthrough](https://drive.google.com/drive/folders/1vjVNA6CGERmcaxcJ_BdXsjuLg1tRnOoB?usp=sharing)
+(a Google Drive folder, no sign-in needed).
+
 ## Contents
 
 - [Screenshots](#screenshots)
